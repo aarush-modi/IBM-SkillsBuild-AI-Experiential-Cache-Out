@@ -1,0 +1,42 @@
+# macOS
+.DS_Store
+._*
+.AppleDouble
+.LSOverride
+Icon
+.Spotlight-V100
+.Trashes
+.fseventsd
+
+# VS Code
+.vscode/
+*.code-workspace
+.history/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.mypy_cache/
+.pytest_cache/
+.coverage
+htmlcov/
+*.egg-info/
+
+# PyInstaller
+build/
+dist/
+
+# Project
+models/*.task
+models/*.pt
+tests/clips/
+*.sqlite
+*.db
+
+# Secrets
+.env
+
+# Claude
+CLAUDE.md
