@@ -8,5 +8,5 @@ testpaths = ["tests/unit"]
 
 [tool.mypy]
 python_version = "3.12"
-files = ["app/contracts.py", "app/logic", "app/alerts", "app/storage"]
+files = ["app/contracts.py", "app/logic", "app/alerts", "app/storage", "app/vision", "scripts"]
 strict = true

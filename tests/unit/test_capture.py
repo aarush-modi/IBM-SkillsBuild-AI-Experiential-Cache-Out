@@ -21,6 +21,8 @@ class FakeCapture:
         self.opened = opened
         self.released = False
         self.shape = shape
+        self.fail = False  # when True, read() returns no frame
+        self.image: Any = None  # when set, read() returns this exact image
         FakeCapture.instances.append(self)
 
     def isOpened(self) -> bool:
@@ -33,6 +35,10 @@ class FakeCapture:
         return 0.0
 
     def read(self) -> tuple[bool, Any]:
+        if self.fail:
+            return False, None
+        if self.image is not None:
+            return True, self.image.copy()
         h, w = self.shape
         img = np.zeros((h, w, 3), dtype=np.uint8)
         img[:, 0] = 255  # mark the left column so mirroring is visible
@@ -50,7 +56,7 @@ def fake_cv2(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_from_settings_uses_vision_block() -> None:
     cam = Camera.from_settings(DEFAULTS)
-    assert (cam.index, cam.width, cam.height, cam.fps) == (0, 640, 480, 30)
+    assert (cam.index, cam.width, cam.height, cam.fps, cam.max_read_failures) == (0, 640, 480, 30, 30)
 
 
 def test_frames_are_mirrored() -> None:
@@ -68,7 +74,7 @@ def test_timestamps_strictly_increase() -> None:
 
 def test_wrong_size_frames_are_resized() -> None:
     with Camera(0, 640, 480, 30) as cam:
-        cam._cap.shape = (720, 1280)  # type: ignore[union-attr]
+        fake(cam).shape = (720, 1280)
         frame = cam.read()
     assert frame is not None and frame.image.shape == (480, 640, 3)
 
@@ -98,3 +104,61 @@ def test_capture_never_writes_to_disk() -> None:
     src = inspect.getsource(capture)
     for forbidden in ("imwrite", "VideoWriter", "write_bytes", "write_text"):
         assert forbidden not in src
+
+
+def fake(cam: Camera) -> FakeCapture:
+    assert isinstance(cam._cap, FakeCapture)
+    return cam._cap
+
+
+def test_empty_read_returns_none() -> None:
+    with Camera(0, 640, 480, 30) as cam:
+        fake(cam).fail = True
+        assert cam.read() is None
+
+
+def test_too_many_empty_reads_raise() -> None:
+    with Camera(0, 640, 480, 30, max_read_failures=5) as cam:
+        fake(cam).fail = True
+        for _ in range(4):
+            assert cam.read() is None
+        with pytest.raises(CameraError, match="not responding"):
+            cam.read()
+
+
+def test_a_good_frame_resets_the_failure_count() -> None:
+    with Camera(0, 640, 480, 30, max_read_failures=3) as cam:
+        for _ in range(5):  # 2 failures, 1 success, repeated: never reaches 3 in a row
+            fake(cam).fail = True
+            assert cam.read() is None and cam.read() is None
+            fake(cam).fail = False
+            assert cam.read() is not None
+
+
+def test_wide_frames_are_centre_cropped_not_stretched(caplog: pytest.LogCaptureFixture) -> None:
+    # 1280x720 (16:9). A 4:3 centre crop keeps columns 160..1119 and drops the sides.
+    img = np.zeros((720, 1280, 3), dtype=np.uint8)
+    img[:, :160] = 255         # left side band: must be cropped away
+    img[:, 1120:] = 255        # right side band: must be cropped away
+    img[300:420, 580:700] = 128  # a 120x120 square in the centre
+    with Camera(0, 640, 480, 30) as cam:
+        fake(cam).image = img
+        frame = cam.read()
+        cam.read()
+    assert frame is not None and frame.image.shape == (480, 640, 3)
+    assert frame.image.max() == 128  # side bands are gone
+    ys, xs = np.nonzero(frame.image[:, :, 0] == 128)
+    h, w = ys.max() - ys.min() + 1, xs.max() - xs.min() + 1
+    assert abs(h - w) <= 2  # the square is still square
+    assert sum("centre-cropping" in r.message for r in caplog.records) == 1  # warned once
+
+
+def test_tall_frames_are_centre_cropped() -> None:
+    img = np.zeros((960, 640, 3), dtype=np.uint8)  # 2:3, too tall for 4:3
+    img[:240] = 255
+    img[720:] = 255
+    with Camera(0, 640, 480, 30) as cam:
+        fake(cam).image = img
+        frame = cam.read()
+    assert frame is not None and frame.image.shape == (480, 640, 3)
+    assert frame.image.max() == 0

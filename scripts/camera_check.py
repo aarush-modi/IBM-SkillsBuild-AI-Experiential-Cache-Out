@@ -33,15 +33,15 @@ def main() -> int:
         with Camera.from_settings(s) as cam:
             frames, t0, fps = 0, time.monotonic(), 0.0
             while True:
-                frame = cam.read()
-                if frame is None:
-                    continue
-                frames += 1
-                if (elapsed := time.monotonic() - t0) >= 1.0:
-                    fps, frames, t0 = frames / elapsed, 0, time.monotonic()
-                img = frame.image.copy()
-                cv2.putText(img, f"{fps:.1f} fps", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
-                cv2.imshow("FocusBand camera check (q to quit)", img)
+                frame = cam.read()  # raises CameraError if the camera stops responding
+                if frame is not None:
+                    frames += 1
+                    if (elapsed := time.monotonic() - t0) >= 1.0:
+                        fps, frames, t0 = frames / elapsed, 0, time.monotonic()
+                    img = frame.image.copy()
+                    cv2.putText(img, f"{fps:.1f} fps", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
+                    cv2.imshow("FocusBand camera check (q to quit)", img)
+                # Always poll keys, even when no frame arrived, so q/Esc keep working.
                 if cv2.waitKey(1) & 0xFF in (ord("q"), 27):
                     break
     except CameraError as e:

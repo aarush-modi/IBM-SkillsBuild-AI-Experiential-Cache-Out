@@ -134,7 +134,7 @@ Each frame runs through the three MediaPipe landmarkers, YOLO runs on every thir
 
 **Per-frame steps**
 
-1. **Capture** at 640 × 480, 30 fps [`vision.capture_width`, `capture_height`, `capture_fps`]; mirror it; wrap it as an `mp.Image` with a timestamp in milliseconds.
+1. **Capture** at 640 × 480, 30 fps [`vision.capture_width`, `capture_height`, `capture_fps`]; mirror it; wrap it as an `mp.Image` with a timestamp in milliseconds. If the camera ignores the requested size and delivers another aspect ratio, centre-crop to 4:3 before resizing; never stretch, because stretching distorts shoulder width, face width and head yaw. If the camera returns no frame 30 times in a row [`vision.max_read_failures`], capture stops with a "Camera not responding" error instead of hanging.
 2. **Pose:** PoseLandmarker, *lite* model, `VIDEO` running mode, one person. Keep nose, eyes, ears, shoulders, elbows and wrists, with their visibility scores.
 3. **Face:** FaceLandmarker with `output_facial_transformation_matrixes=True`. Convert the matrix to yaw, pitch and roll in degrees. Iris points are kept for optional gaze refinement later.
 4. **Hands:** HandLandmarker, up to two hands. Compute a bounding box and a "grasp" flag (fingertips curled toward the palm) for each hand.
@@ -371,7 +371,7 @@ Settings live in `settings.json` next to the database. These defaults are the si
   "vision": {
     "capture_width": 640, "capture_height": 480, "capture_fps": 30,
     "yolo_every_n": 3, "yolo_imgsz": 416, "hands_every_n": 1,
-    "shoulders_missing_warn_s": 5
+    "shoulders_missing_warn_s": 5, "max_read_failures": 30
   },
   "smoothing": {"ema_alpha": 0.3, "bool_window_s": 2, "bool_ratio": 0.7},
   "detectors": {
