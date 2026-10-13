@@ -127,19 +127,19 @@ The desktop app runs three threads so the UI never freezes: a **vision thread** 
 
 ## 5. Vision pipeline
 
-Each frame runs through the three MediaPipe landmarkers, YOLO runs on every third frame, and the results become one `FrameFeatures` record that the rules read. The models only report what they see; all judgement lives in the rules (sections 6 to 8), which are easy to unit-test.
+Each frame runs through the three MediaPipe landmarkers, YOLO runs on every third frame, and the results become one `FrameFeatures` record that the rules read. The models only report what they see; all judgement lives in the rules (sections 6 to 8), which are easy to unit-test. Every number in sections 5 to 8 is a default from `settings.json` (section 11), not a constant in code; the settings key is given in brackets.
 
-**Camera setup the app asks for:** webcam at the top of the screen, facing the user, with head, both shoulders and the desk surface in view. If shoulders are not visible for 5 s, the session screen shows "Move back or tilt the camera down".
+**Camera setup the app asks for:** webcam at the top of the screen, facing the user, with head, both shoulders and the desk surface in view. If shoulders are not visible for 5 s [`vision.shoulders_missing_warn_s`], the session screen shows "Move back or tilt the camera down".
 
 **Per-frame steps**
 
-1. **Capture** at 640 × 480, 30 fps; mirror it; wrap it as an `mp.Image` with a timestamp in milliseconds.
+1. **Capture** at 640 × 480, 30 fps [`vision.capture_width`, `capture_height`, `capture_fps`]; mirror it; wrap it as an `mp.Image` with a timestamp in milliseconds.
 2. **Pose:** PoseLandmarker, *lite* model, `VIDEO` running mode, one person. Keep nose, eyes, ears, shoulders, elbows and wrists, with their visibility scores.
 3. **Face:** FaceLandmarker with `output_facial_transformation_matrixes=True`. Convert the matrix to yaw, pitch and roll in degrees. Iris points are kept for optional gaze refinement later.
 4. **Hands:** HandLandmarker, up to two hands. Compute a bounding box and a "grasp" flag (fingertips curled toward the palm) for each hand.
-5. **Objects:** YOLO26n at image size 416, every 3rd frame (about 10 Hz), filtered to COCO classes the rules use. Between YOLO frames, the last detections are reused.
+5. **Objects:** YOLO26n at image size 416 [`vision.yolo_imgsz`], every 3rd frame [`vision.yolo_every_n`] (about 10 Hz), filtered to COCO classes the rules use. Between YOLO frames, the last detections are reused.
 6. **Features:** build `FrameFeatures` (below).
-7. **Smoothing:** exponential moving average on angles and distances (alpha 0.3). Each boolean signal is "on" only when it holds in at least 70% of frames over a rolling 2 s window.
+7. **Smoothing:** exponential moving average on angles and distances (alpha 0.3 [`smoothing.ema_alpha`]). Each boolean signal is "on" only when it holds in at least 70% of frames [`smoothing.bool_ratio`] over a rolling 2 s window [`smoothing.bool_window_s`].
 
 ```python
 @dataclass(frozen=True)
@@ -157,18 +157,18 @@ class FrameFeatures:
     objects: list[Detection]      # class, confidence, bbox
 ```
 
-**Performance budget:** 15 fps means about 66 ms per frame on the vision thread. If profiling on the slowest team laptop shows more than that, drop in this order: hands on every 2nd frame, YOLO every 5th frame, then capture at 15 fps. The UI preview always shows the newest frame and never waits for the models.
+**Performance budget:** 15 fps means about 66 ms per frame on the vision thread. If profiling on the slowest team laptop shows more than that, drop in this order: hands on every 2nd frame (`vision.hands_every_n` = 2), YOLO every 5th frame (`vision.yolo_every_n` = 5), then capture at 15 fps (`vision.capture_fps` = 15). These are settings changes, not code changes. The UI preview always shows the newest frame and never waits for the models.
 
 ## 6. Distraction detection
 
-Each detector turns smoothed features into one yes or no per frame; the 1-minute timer in section 8 decides whether to alert. That timer filters most short, harmless moments (a sip of water, a glance at a notification) without extra rules. All angles are measured against the user's calibrated baseline, and all numbers below are starting defaults to tune in testing.
+Each detector turns smoothed features into one yes or no per frame; the 1-minute timer in section 8 decides whether to alert. That timer filters most short, harmless moments (a sip of water, a glance at a notification) without extra rules. All angles are measured against the user's calibrated baseline, and all numbers below are starting defaults to tune in testing; they live in the `detectors` block of `settings.json`.
 
 | Detector | Signals used | Fires when | Known false triggers and handling |
 | --- | --- | --- | --- |
-| Phone | YOLO `cell phone`, hand boxes, head pitch | A phone with confidence of at least 0.45 overlaps or sits within 0.1 frame-widths of a hand, **or** a phone is visible on the desk while head pitch is 20° or more below baseline | Phone used for two-factor codes or a call → 1-minute timer plus a "Snooze 10 min" button |
-| Looking away | Head yaw and pitch | Yaw differs from baseline by more than 25°, or pitch is more than 20° above baseline. Labelled **window** when yaw is within 15° of the calibrated window direction | Looking down at notes is not counted: pitch down with hands on the desk or a `book` detected counts as working |
+| Phone | YOLO `cell phone`, hand boxes, head pitch | A phone with confidence of at least 0.45 [`phone_conf`] overlaps or sits within 0.1 frame-widths [`phone_hand_dist`] of a hand, **or** a phone is visible on the desk while head pitch is 20° or more below baseline [`phone_pitch_down_deg`] | Phone used for two-factor codes or a call → 1-minute timer plus a "Snooze 10 min" button |
+| Looking away | Head yaw and pitch | Yaw differs from baseline by more than 25° [`look_yaw_deg`], or pitch is more than 20° above baseline [`look_pitch_up_deg`]. Labelled **window** when yaw is within 15° [`window_yaw_tol_deg`] of the calibrated window direction | Looking down at notes is not counted: pitch down with hands on the desk or a `book` detected counts as working |
 | Desk objects | Hand boxes and grasp flags, YOLO objects, calibrated work zone | A hand is grasping and is outside the keyboard work zone, **and** it overlaps an object not on the work list (keyboard, mouse, laptop, book) or no object YOLO recognizes | Weakest detector: COCO has no class for most ornaments. Writing with a pen looks similar; the work zone and book check reduce this. Upgrade path below |
-| Away | Pose presence | No pose detected, or shoulder visibility under 0.5, for 10 s | A user taking a break should press **Break**, which pauses detection |
+| Away | Pose presence | No pose detected, or shoulder visibility under 0.5 [`away_shoulder_vis`], continuously for 10 s [`away_detect_s`]. Only then does the detector fire and the normal 60 s distraction hold (section 8) start, so an alert comes after about 70 s away | A user taking a break should press **Break**, which pauses detection |
 
 **When several fire at once**, the event takes the highest-priority label: phone, then desk objects, then looking away, then away. The UI and report show that label.
 
@@ -180,39 +180,39 @@ Posture is judged as change from the user's own calibrated upright posture, not 
 
 **Calibration (about 30 s, in the wizard and from Settings)**
 
-1. **Upright baseline, 10 s:** "Sit tall, shoulders back, look at your screen." Store the median of every posture metric and of head yaw and pitch.
-2. **Window direction, 3 s, optional:** "Look out your window." Store head yaw.
-3. **Work zone, 3 s:** "Put your hands on your keyboard." Store the box around both hands, enlarged by 30%.
+1. **Upright baseline, 10 s [`calibration.upright_s`]:** "Sit tall, shoulders back, look at your screen." Store the median of every posture metric and of head yaw and pitch.
+2. **Window direction, 3 s [`calibration.window_s`], optional:** "Look out your window." Store head yaw.
+3. **Work zone, 3 s [`calibration.work_zone_s`]:** "Put your hands on your keyboard." Store the box around both hands, enlarged by 30% [`calibration.work_zone_pad`].
 
-At session start, if the shoulder midpoint has moved more than 15% of frame width from the stored baseline, the app suggests recalibrating, because the camera has probably moved.
+At session start, if the shoulder midpoint has moved more than 15% of frame width [`calibration.recalibrate_shift`] from the stored baseline, the app suggests recalibrating, because the camera has probably moved.
 
-**Metrics**
+**Metrics** (thresholds in the `posture` block of `settings.json`)
 
 | Issue | Computed from | Bad when (versus baseline) | On-screen tip |
 | --- | --- | --- | --- |
-| Slouching | Vertical gap from nose to shoulder midpoint, divided by shoulder width | Gap shrinks by more than 15% | "Sit up tall: you're sinking into your chair." |
-| Leaning in | Face width (proxy for distance to screen) | Grows by more than 20% | "Lean back: you're getting close to the screen." |
-| Neck bent down | Head pitch | More than 20° further down for most of the window | "Raise your chin, or raise your screen to eye level." |
-| Head tilt | Head roll | More than 10° away from baseline | "Level your head." |
-| Uneven shoulders | Angle of the line through both shoulders | More than 7° away from baseline | "Even out your shoulders. Leaning on one elbow?" |
+| Slouching | Vertical gap from nose to shoulder midpoint, divided by shoulder width | Gap shrinks by more than 15% [`slouch_pct`] | "Sit up tall: you're sinking into your chair." |
+| Leaning in | Face width (proxy for distance to screen) | Grows by more than 20% [`lean_pct`] | "Lean back: you're getting close to the screen." |
+| Neck bent down | Head pitch | More than 20° further down [`neck_pitch_deg`] for most of the window | "Raise your chin, or raise your screen to eye level." |
+| Head tilt | Head roll | More than 10° away from baseline [`tilt_roll_deg`] | "Level your head." |
+| Uneven shoulders | Angle of the line through both shoulders | More than 7° away from baseline [`shoulder_angle_deg`] | "Even out your shoulders. Leaning on one elbow?" |
 
 **Score and alerts**
 
-- Each second, each metric gives a penalty from 0 (at baseline) to 1 (at twice its threshold). Posture score = 100 − 20 × the sum of penalties, clamped to 0–100.
-- Posture is **bad** when the score stays under 70 for 90% of a 30 s rolling window. The on-screen tip names the metric with the largest penalty.
-- **Buzz** when posture stays bad for 2 minutes (configurable, 1 to 10 min). After a posture buzz, the next one waits at least 5 minutes, and posture buzzes are held back while a distraction alert is active.
+- Each second, each metric gives a penalty from 0 (at baseline) to 1 (at twice its threshold). Posture score = 100 − 20 [`posture.penalty_weight`] × the sum of penalties, clamped to 0–100.
+- Posture is **bad** when the score stays under 70 [`posture.bad_score`] for 90% [`posture.bad_ratio`] of a 30 s rolling window [`posture.bad_window_s`]. The on-screen tip names the metric with the largest penalty.
+- **Alert** when posture stays bad for 2 minutes [`posture_threshold_s`] (configurable, 1 to 10 min). After a posture alert, the next one waits at least 5 minutes [`posture_cooldown_s`], and posture alerts are held back while a distraction alert is active.
 - Posture is not scored while the user is away or looking away, because the landmarks are unreliable then.
 - The live overlay draws the pose skeleton, colours each joint line green or amber by its metric, and shows the score in a corner.
 
 ## 8. Session states and alert timing
 
-A distraction must hold for 60 s before the wrist buzzes, and 5 s of focus resets the clock. The focus state machine below runs once per smoothed frame; the posture tracker from section 7 runs beside it and only reads whether the user is present and looking at the screen.
+A distraction must hold for 60 s before an alert is sent, and 5 s of focus resets the clock. The focus state machine below runs once per smoothed frame; the posture tracker from section 7 runs beside it and only reads whether the user is present and looking at the screen.
 
 ```text
                 distraction seen               held 60 s
    +---------+ -----------------> +---------+ ------------> +------------------+
    | Focused |                    | Pending |               | Distracted       |<--+
-   |         | <----------------- | (60 s   |               | (wrist buzz sent)|   | repeat every 2 min
+   |         | <----------------- | (60 s   |               | (alert sent)     |   | repeat every 2 min
    +---------+     5 s focus      |  timer) |               +------------------+---+
      ^  |  ^                      +---------+                        |
      |  |  +---------------------------------------------------------+
@@ -225,17 +225,17 @@ A distraction must hold for 60 s before the wrist buzzes, and 5 s of focus reset
    +--------------------------------+
 ```
 
-Any of the four distractions, including being away, starts the Pending timer; 5 s of focus at any point sends the user back to Focused.
+Any of the four distractions starts the Pending timer once its detector fires. For being away, the detector itself only fires after 10 s of absence (section 6), so Pending starts 10 s after the user leaves. 5 s of focus at any point sends the user back to Focused.
 
-| Rule | Default | Configurable |
-| --- | --- | --- |
-| Distraction must hold before the first alert | 60 s | 15 s to 5 min, per distraction type |
-| Focus needed to cancel a pending alert or end an event | 5 s continuous | No |
-| Repeat alert while still distracted | Every 2 min | 1 to 10 min, or off |
-| Escalate to the stronger vibration pattern | From the 3rd repeat | On or off |
-| Snooze | 10 min | 5 to 30 min |
-| Away before entering Away | 10 s | No |
-| Away with no input before auto-pausing the session | 10 min | 5 to 30 min |
+| Rule | Default | Settings key | In the Settings screen |
+| --- | --- | --- | --- |
+| Distraction must hold before the first alert | 60 s | `distraction_threshold_s.<type>` | 15 s to 5 min, per distraction type |
+| Focus needed to cancel a pending alert or end an event | 5 s continuous | `focus_reset_s` | No (file only) |
+| Repeat alert while still distracted | Every 2 min | `repeat_alert_s` (`null` = off) | 1 to 10 min, or off |
+| Escalate to the stronger vibration pattern | From the 3rd repeat | `escalate_after_repeats` (`null` = off) | On or off |
+| Snooze | 10 min | `snooze_s` | 5 to 30 min |
+| Absence before the away detector fires | 10 s | `away_detect_s` | No (file only) |
+| Away with no input before auto-pausing the session | 10 min | `auto_pause_away_s` | 5 to 30 min |
 
 Every state change is written to the `events` table with a timestamp, so the report and dashboard are built from the same record the alerts used.
 
@@ -257,7 +257,7 @@ class Alert:
     created_at: float
 ```
 
-The dispatcher tries sinks in priority order (band stub → Apple Watch via relay → desktop) and moves on if `send` fails or takes longer than 2 s. The desktop also always shows the alert as an in-app banner while the window is visible.
+The dispatcher tries sinks in priority order (band stub → Apple Watch via relay → desktop) and moves on if `send` fails or takes longer than 2 s [`alerts.sink_timeout_s`]. The desktop also always shows the alert as an in-app banner while the window is visible.
 
 **Vibration patterns** (on and off times in milliseconds; Apple Watch approximates them, and the band design and Wear OS app would play them exactly)
 
@@ -333,7 +333,7 @@ CREATE TABLE events (
   alert_sink TEXT                    -- applewatch | wearos | desktop, for alert rows
 );
 
-CREATE TABLE posture_samples (       -- one row per 10 s, averaged
+CREATE TABLE posture_samples (       -- one row per 10 s [posture.sample_interval_s], averaged
   session_id INTEGER REFERENCES sessions(id),
   t INTEGER NOT NULL,                -- seconds since session start
   score REAL,
@@ -347,20 +347,46 @@ CREATE TABLE calibration (
 );
 ```
 
-Settings live in `settings.json` next to the database. Defaults:
+Settings live in `settings.json` next to the database. These defaults are the single source for every threshold and timing in sections 5 to 9; `app/logic/` reads them and never hard-codes a number. The top-level timing keys are what the Settings screen exposes (ranges in section 8). The nested blocks are tuning values, edited in the file during replay evaluation (section 12). `storage/settings.py` fills any missing key from these defaults, so older settings files keep working. Defaults:
 
 ```json
 {
   "camera_index": 0,
   "overlay": true,
+  "watch_paired": false,
+
   "distraction_threshold_s": {"phone": 60, "looking_away": 60, "desk_object": 60, "away": 60},
+  "focus_reset_s": 5,
+  "away_detect_s": 10,
   "repeat_alert_s": 120,
   "escalate_after_repeats": 3,
   "posture_threshold_s": 120,
   "posture_cooldown_s": 300,
   "snooze_s": 600,
   "auto_pause_away_s": 600,
-  "watch_paired": false
+
+  "vision": {
+    "capture_width": 640, "capture_height": 480, "capture_fps": 30,
+    "yolo_every_n": 3, "yolo_imgsz": 416, "hands_every_n": 1,
+    "shoulders_missing_warn_s": 5
+  },
+  "smoothing": {"ema_alpha": 0.3, "bool_window_s": 2, "bool_ratio": 0.7},
+  "detectors": {
+    "phone_conf": 0.45, "phone_hand_dist": 0.1, "phone_pitch_down_deg": 20,
+    "look_yaw_deg": 25, "look_pitch_up_deg": 20, "window_yaw_tol_deg": 15,
+    "away_shoulder_vis": 0.5
+  },
+  "calibration": {
+    "upright_s": 10, "window_s": 3, "work_zone_s": 3,
+    "work_zone_pad": 0.3, "recalibrate_shift": 0.15
+  },
+  "posture": {
+    "slouch_pct": 15, "lean_pct": 20, "neck_pitch_deg": 20,
+    "tilt_roll_deg": 10, "shoulder_angle_deg": 7,
+    "penalty_weight": 20, "bad_score": 70, "bad_window_s": 30, "bad_ratio": 0.9,
+    "sample_interval_s": 10
+  },
+  "alerts": {"sink_timeout_s": 2}
 }
 ```
 
