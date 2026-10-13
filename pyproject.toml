@@ -1,0 +1,12 @@
+[project]
+name = "focusband"
+version = "0.1.0"
+requires-python = ">=3.12,<3.14"
+
+[tool.pytest.ini_options]
+testpaths = ["tests/unit"]
+
+[tool.mypy]
+python_version = "3.12"
+files = ["app/contracts.py", "app/logic", "app/alerts", "app/storage"]
+strict = true

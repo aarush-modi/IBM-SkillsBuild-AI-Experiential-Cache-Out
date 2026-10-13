@@ -74,7 +74,7 @@ Seventeen functional requirements; P0 items alone make a complete demo.
 | False alerts | No more than 1 per 30 minutes of genuine focused work |
 | Offline use | Everything except watch delivery works with no internet |
 | Cost | Nothing: no paid services, no trials, no developer accounts beyond a free Apple ID |
-| Platforms | Windows 10/11 and macOS 13 or later |
+| Platforms | Windows 10/11 and macOS 13 or later on Apple Silicon |
 
 ## 4. Architecture and stack
 
@@ -112,7 +112,7 @@ The desktop app runs three threads so the UI never freezes: a **vision thread** 
 
 | Layer | Choice | Notes |
 | --- | --- | --- |
-| Language | Python 3.11 or 3.12 | Check MediaPipe wheel support before moving to a newer Python |
+| Language | Python 3.12 or 3.13 | MediaPipe 1.1.0 wheels: Apple Silicon Macs, Windows x64/ARM, Linux; **no Intel Mac** |
 | Camera | OpenCV `cv2.VideoCapture` | Camera index chosen in Settings |
 | Body, face, hands | MediaPipe Tasks API: PoseLandmarker (33 points), FaceLandmarker (478 points plus a head transform matrix), HandLandmarker (21 points per hand) | Use `mp.tasks.vision`; the old `mp.solutions` API is gone from newer MediaPipe releases, so pre-2024 tutorials will not run as written |
 | Objects | Ultralytics YOLO26n, pretrained on COCO (includes cell phone, keyboard, mouse, laptop, book, cup) | Licensed AGPL-3.0, fine for a school project; a commercial product needs an Ultralytics licence |
@@ -120,7 +120,7 @@ The desktop app runs three threads so the UI never freezes: a **vision thread** 
 | Desktop notifications | `desktop-notifier` package | Windows toasts and macOS Notification Center from one API |
 | Bluetooth LE | Not used; the band sink is a stub | `bleak` is the intended library if the band is ever built |
 | HTTP to ntfy | `httpx` (async) | P2 |
-| Type checking | mypy | Run on `app/logic` and `app/alerts` |
+| Type checking | mypy, strict | Paths set in `pyproject.toml`: contracts, logic, alerts, storage |
 | Storage | SQLite (Python's built-in `sqlite3`) plus a JSON settings file | Local only |
 | Watch delivery (P2) | Public ntfy.sh server, no account | Free; the iPhone ntfy app mirrors notifications to the paired Apple Watch. Section 9 |
 | Packaging | PyInstaller, one build per OS | The macOS build needs a camera usage description in its Info.plist |
@@ -403,6 +403,7 @@ The repo separates models from rules so that every rule can be tested with fake 
 focusband/
   app/
     main.py              # starts threads, Qt app, tray icon
+    contracts.py         # shared frozen dataclasses and AlertSink (stdlib only)
     vision/              # capture.py, landmarkers.py, objects.py, features.py
     logic/               # detectors.py, posture.py, state_machine.py, calibration.py
     alerts/              # dispatcher.py, desktop.py, ntfy.py, ble_band.py (stub)

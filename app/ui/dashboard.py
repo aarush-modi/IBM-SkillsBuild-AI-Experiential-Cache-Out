@@ -1,0 +1,1 @@
+"""Stats history dashboard."""
