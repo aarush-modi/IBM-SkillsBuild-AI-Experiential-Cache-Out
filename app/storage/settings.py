@@ -38,7 +38,7 @@ DEFAULTS: dict[str, Any] = {
     "vision": {
         "capture_width": 640, "capture_height": 480, "capture_fps": 30,
         "yolo_every_n": 3, "yolo_imgsz": 416, "hands_every_n": 1,
-        "shoulders_missing_warn_s": 5,
+        "shoulders_missing_warn_s": 5, "max_read_failures": 30,
     },
     "smoothing": {"ema_alpha": 0.3, "bool_window_s": 2, "bool_ratio": 0.7},
     "detectors": {
