@@ -27,16 +27,16 @@ FocusBand (working name) is a Python desktop app for Windows and macOS. It watch
 | --- | --- | --- |
 | P0, must ship | Webcam pipeline, four distraction detectors, posture scoring, calibration, session timer, live overlay, on-screen tips, desktop notifications | The core demo works with no wrist device at all |
 | P1, should ship | End-of-session report, stats history dashboard, band stub sink | The report and dashboard reuse stored events; the band stub is small and shows the band design |
-| P2, after the freeze | Apple Watch app via the cloud relay — **required for the final demo** | Built after P0 and P1, but must work end to end; needs a paid Apple Developer account and a Mac with Xcode |
-| Stretch | Wear OS app via the same relay | Only after the Apple Watch works |
+| P2, after the freeze | Apple Watch alerts via ntfy — **required for the final demo** | The desktop publishes to a private ntfy.sh topic and the iPhone ntfy app mirrors it to the watch; no accounts, no cost, no watch code |
+| Stretch | Custom Apple Watch app with FocusBand vibration patterns; Wear OS via the ntfy Android app | Only after the ntfy route works |
 
 ## 2. Users and privacy
 
 One person runs the app on themselves, and only they see the results. Because the camera watches someone for hours, privacy is a design rule, not a setting.
 
-- **No video is stored.** Frames are processed in memory and dropped. The release build has no code path that writes frames to disk. A developer-only debug recorder exists behind a build flag and is off in release.
+- **No video is stored.** Frames are processed in memory and dropped. The release build has no code path that writes frames to disk. A developer-only debug recorder exists behind the `FOCUSBAND_DEV_RECORDER` build flag and is off in release.
 - **What is stored:** session times, distraction events (type, start, end), posture scores and calibration values, in a local SQLite file in the user's app data folder.
-- **What leaves the computer:** only when a watch is paired, a small alert message (type, label, pattern, timestamp; no images, no names) goes to the cloud relay.
+- **What leaves the computer:** only when a watch is paired, a small alert message (type, label, pattern, timestamp; no images, no names) is published to the user's private topic on the public ntfy.sh server. The topic is a long random name that acts as the secret; anyone who knows it can read the alerts, so it is stored in the OS keychain and shown only on the pairing screen.
 - **The camera is only on during a session.** The session screen shows a clear "camera on" indicator and a pause button. Pausing or ending a session releases the camera.
 - **First-run consent screen** explains what the camera analyses, what is stored and how to delete it. Settings include **Delete all my data**.
 - **Test footage:** clips recorded of team members for tuning are recorded with their consent, kept off shared drives, and deleted after the project.
@@ -62,22 +62,23 @@ Seventeen functional requirements; P0 items alone make a complete demo.
 | FR-13 | Band: BLE contract documented and a stub `AlertSink` in the dispatcher chain (not functional) | P1 |
 | FR-14 | End-of-session report: focus time, distractions by type, posture score, top posture issues | P1 |
 | FR-15 | Stats history dashboard across days | P1 |
-| FR-16 | Wear OS companion app receives alerts through the cloud relay | Stretch |
-| FR-17 | Apple Watch companion app receives alerts through the cloud relay (**demo-required**) | P2 |
+| FR-16 | Custom Apple Watch app plays FocusBand vibration patterns; Wear OS receives alerts via the ntfy Android app | Stretch |
+| FR-17 | Apple Watch receives alerts through ntfy, mirrored from the iPhone ntfy app (**demo-required**) | P2 |
 
 **Non-functional targets**
 
 | Target | Value |
 | --- | --- |
 | Processing rate | 15 frames per second or more on a laptop CPU from 2020 or later, no GPU required |
-| Alert latency after the threshold is crossed | Under 1 s for desktop; under 5 s through the relay to the Apple Watch |
+| Alert latency after the threshold is crossed | Under 1 s for desktop; under 5 s through ntfy to the Apple Watch |
 | False alerts | No more than 1 per 30 minutes of genuine focused work |
 | Offline use | Everything except watch delivery works with no internet |
+| Cost | Nothing: no paid services, no trials, no developer accounts beyond a free Apple ID |
 | Platforms | Windows 10/11 and macOS 13 or later |
 
 ## 4. Architecture and stack
 
-One Python process runs everything that touches video. The only parts outside it are the watch apps and their small relay (P2). The band appears in the diagram as a design-only stub.
+One Python process runs everything that touches video. The only part outside it is the public ntfy.sh server and the phone and watch that subscribe to it (P2). The band appears in the diagram as a design-only stub.
 
 ```text
                  Webcam
@@ -94,8 +95,8 @@ One Python process runs everything that touches video. The only parts outside it
 |                              |                     |          |
 |                              v                     v          |
 |                  State machine  ------->  Alert dispatcher ---+-x-> Custom band (stub, never sends)
-|                              |            (band stub, watch,  |---> Cloud relay (P2) -> Apple Watch
-|                              v             then desktop)      |                        (Wear OS stretch)
+|                              |            (band stub, watch,  |---> ntfy.sh (P2) -> iPhone ntfy app -> Apple Watch
+|                              v             then desktop)      |                     (Wear OS: ntfy Android app, stretch)
 |                  SQLite storage                               |---> Desktop notification (P0)
 |                  (events, scores; no video)                   |
 |                              |                                |
@@ -107,7 +108,7 @@ One Python process runs everything that touches video. The only parts outside it
 
 Frames flow from webcam to features; only the alert dispatcher sends anything out, and it sends a short message, never an image.
 
-The desktop app runs three threads so the UI never freezes: a **vision thread** (capture, models, features), a **logic thread** (rules, state machine, posture tracker, storage) and the **Qt UI thread**. They pass immutable dataclasses through queues. Alert sending runs on an asyncio loop in the logic thread, because the relay's HTTP calls (and Bluetooth, if the band is ever built) are asynchronous.
+The desktop app runs three threads so the UI never freezes: a **vision thread** (capture, models, features), a **logic thread** (rules, state machine, posture tracker, storage) and the **Qt UI thread**. They pass immutable dataclasses through queues. Alert sending runs on an asyncio loop in the logic thread, because the ntfy HTTP calls (and Bluetooth, if the band is ever built) are asynchronous.
 
 | Layer | Choice | Notes |
 | --- | --- | --- |
@@ -118,10 +119,10 @@ The desktop app runs three threads so the UI never freezes: a **vision thread** 
 | UI | PySide6 (Qt) with pyqtgraph for charts | Qt also provides the tray or menu-bar icon |
 | Desktop notifications | `desktop-notifier` package | Windows toasts and macOS Notification Center from one API |
 | Bluetooth LE | Not used; the band sink is a stub | `bleak` is the intended library if the band is ever built |
-| HTTP to the relay | `httpx` (async) | P2 |
+| HTTP to ntfy | `httpx` (async) | P2 |
 | Type checking | mypy | Run on `app/logic` and `app/alerts` |
 | Storage | SQLite (Python's built-in `sqlite3`) plus a JSON settings file | Local only |
-| Watch relay (P2) | Firebase Cloud Messaging, called by one small Cloud Function | Section 9 explains why the desktop never calls FCM directly |
+| Watch delivery (P2) | Public ntfy.sh server, no account | Free; the iPhone ntfy app mirrors notifications to the paired Apple Watch. Section 9 |
 | Packaging | PyInstaller, one build per OS | The macOS build needs a camera usage description in its Info.plist |
 | Development | IBM Bob for scaffolding, tests and refactors; GitHub for code | See section 13 |
 
@@ -257,7 +258,7 @@ class Alert:
     created_at: float
 ```
 
-The dispatcher tries sinks in priority order (band stub → Apple Watch via relay → desktop) and moves on if `send` fails or takes longer than 2 s [`alerts.sink_timeout_s`]. The desktop also always shows the alert as an in-app banner while the window is visible.
+The dispatcher tries sinks in priority order (band stub → ntfy to the watch → desktop) and moves on if `send` fails or takes longer than 2 s [`alerts.sink_timeout_s`]. The desktop also always shows the alert as an in-app banner while the window is visible.
 
 **Vibration patterns** (on and off times in milliseconds; Apple Watch approximates them, and the band design and Wear OS app would play them exactly)
 
@@ -267,6 +268,8 @@ The dispatcher tries sinks in priority order (band stub → Apple Watch via rela
 | 2 | Posture | 150 on, 100 off, 150 on, 100 off, 150 on |
 | 3 | Escalated distraction | 800 on, 200 off, 800 on, 200 off, 800 on |
 | 4 | Test or paired | 100 on |
+
+On the ntfy route the watch plays its default notification haptic; only the optional custom watch app plays these patterns.
 
 ### Custom band: Bluetooth LE protocol (design only, not implemented)
 
@@ -279,22 +282,21 @@ The band is presented as a design. This contract describes how it would work: th
 - **Intended desktop behaviour (if built):** `bleak` scans for the service UUID, connects, and stays connected for the session. On disconnect it retries every 10 s and falls through to the next sink meanwhile. Pairing happens in Settings: Scan, pick the band, receive pattern 4.
 - **Intended firmware (if built):** a small ESP32-C3 or nRF52840 board drives a coin vibration motor by PWM (`intensity` → duty cycle), plays `pattern_id` from the table above without blocking BLE, and reports battery each minute.
 
-### Watches: cloud relay (P2)
+### Watches: ntfy (P2)
 
-Watches pair with phones, not laptops, so alerts go laptop → relay → watch. The relay is one small Firebase Cloud Function with three endpoints; the desktop never holds Google or Apple credentials, because anything shipped inside the app can be extracted.
+Watches pair with phones, not laptops, so alerts go laptop → ntfy.sh → phone → watch. This uses the free public [ntfy](https://ntfy.sh) server: no account, no card, no Apple Developer Program, and no server code of our own.
 
-1. **Watch registers:** the watch app gets its push token and calls `POST /register`. The relay stores the token and returns a 6-digit code, which the watch shows.
-2. **User pairs:** the user types the code into the desktop app's Settings, which calls `POST /pair` and receives a long random device secret, stored locally.
-3. **Alert:** the desktop calls `POST /alert` with the secret and the `Alert` fields. The relay sends a high-priority push to the stored token.
+1. **Pair:** in Settings, the desktop generates a random 32-character topic name, stores it in the OS keychain, and shows it as a QR code and as text. The user subscribes to that topic in the free ntfy app on their iPhone and allows ntfy notifications to mirror to the Apple Watch. The desktop then sends pattern 4 as a test.
+2. **Alert:** `NtfySink` POSTs one JSON message to `ntfy_server` with the topic, a short title and body (e.g. "Phone — 1 min"), priority high, and tags carrying `kind` and `pattern`. Nothing else is sent.
+3. **Forget watch:** deletes the topic from the keychain and clears `watch_paired`.
 
-| Watch | App | How the alert arrives | Vibration |
-| --- | --- | --- | --- |
-| Wear OS (stretch) | Kotlin, standalone app | FCM high-priority **data** message, handled in `FirebaseMessagingService.onMessageReceived` | Exact pattern with `VibrationEffect.createWaveform`, plus a notification |
-| Apple Watch (demo-required) | Swift, independent watchOS app | Relay sends straight to Apple's push service (APNs) using a token key; Firebase's watchOS support is community-maintained only, so it is skipped | System notification haptic in the background; the custom pattern plays only when the app is in the foreground |
+| Watch | How the alert arrives | Vibration |
+| --- | --- | --- |
+| Apple Watch (demo-required) | iPhone ntfy app receives it and iOS mirrors the notification to the watch | Default notification haptic |
+| Apple Watch custom app (stretch) | Small Swift app installed from Xcode with a free Apple ID (reinstall every 7 days). While open during a session, it polls `GET <ntfy_server>/<topic>/json?poll=1&since=<last id>` every few seconds | Plays the pattern from the table above with `WKInterfaceDevice` haptics. Must stay in the foreground; free accounts cannot receive push |
+| Wear OS (stretch) | ntfy Android app on the phone or watch | Default notification vibration |
 
-Cloud Functions require Firebase's pay-as-you-go plan; usage at this size should cost nothing, but check current pricing before setup. Apple Watch also needs the paid Apple Developer Program to send pushes.
-
-**Plan B if the watch apps slip:** publish each alert to a private ntfy topic (a long random name) with one HTTP POST. The user installs the free ntfy app on their phone, and the phone mirrors the notification to whatever watch is paired with it. This needs no watch code, but the vibration pattern is the watch's default.
+**Trade-off:** ntfy.sh is a third-party server and anyone who knows the topic can read its messages, which is why the topic is long, random and kept in the keychain, and why messages carry only kind, label, pattern and timestamp. If that becomes a concern, ntfy can be self-hosted later without changing the desktop code beyond `ntfy_server`.
 
 ## 10. Desktop screens
 
@@ -305,7 +307,7 @@ Six screens plus a tray or menu-bar icon cover the whole flow; the session scree
 | Welcome and consent | What the camera analyses, what is stored, camera permission request, link to Delete my data | P0 |
 | Calibration wizard | The three steps from section 7 with a live preview, a countdown and a pass or retry result per step | P0 |
 | Session | Live preview with skeleton overlay toggle, "camera on" indicator, timer, focus state chip, posture score, tip banner, Pause, Break, Snooze and End buttons | P0 |
-| Settings | Thresholds from section 8, camera choice, overlay default, alert devices (watch pairing code, Send test alert; band shown as "coming soon") | P0 |
+| Settings | Thresholds from section 8, camera choice, overlay default, alert devices (watch pairing QR code and topic, Send test alert, Forget watch; band shown as "coming soon") | P0 |
 | Session report | Focus time vs total time, distractions by type with counts and minutes, posture score over the session, the 3 most common posture issues with their tips | P1 |
 | Dashboard | Focus minutes per day, distractions per hour of work, average posture score, for the last 7 or 30 days | P1 |
 | Tray or menu-bar icon | Current state colour, Start or End session, Pause, Open window; keeps running when the window is closed | P0 |
@@ -330,7 +332,7 @@ CREATE TABLE events (
   label TEXT,                        -- phone, window, desk_object, slouching, ...
   started_at TEXT NOT NULL,
   ended_at TEXT,
-  alert_sink TEXT                    -- applewatch | wearos | desktop, for alert rows
+  alert_sink TEXT                    -- ntfy | desktop, for alert rows
 );
 
 CREATE TABLE posture_samples (       -- one row per 10 s [posture.sample_interval_s], averaged
@@ -354,6 +356,7 @@ Settings live in `settings.json` next to the database. These defaults are the si
   "camera_index": 0,
   "overlay": true,
   "watch_paired": false,
+  "ntfy_server": "https://ntfy.sh",
 
   "distraction_threshold_s": {"phone": 60, "looking_away": 60, "desk_object": 60, "away": 60},
   "focus_reset_s": 5,
@@ -390,7 +393,7 @@ Settings live in `settings.json` next to the database. These defaults are the si
 }
 ```
 
-The watch device secret is stored in the OS keychain (via the `keyring` package), not in plain JSON; the JSON keeps only a flag that a watch is paired.
+The ntfy topic is stored in the OS keychain (via the `keyring` package), not in plain JSON; the JSON keeps only a flag that a watch is paired and the server URL.
 
 ## 12. Repository, testing and acceptance
 
@@ -402,14 +405,12 @@ focusband/
     main.py              # starts threads, Qt app, tray icon
     vision/              # capture.py, landmarkers.py, objects.py, features.py
     logic/               # detectors.py, posture.py, state_machine.py, calibration.py
-    alerts/              # dispatcher.py, desktop.py, relay.py, ble_band.py (stub)
+    alerts/              # dispatcher.py, desktop.py, ntfy.py, ble_band.py (stub)
     storage/             # db.py, settings.py
     ui/                  # session.py, wizard.py, settings.py, report.py, dashboard.py
   models/                # .task and .pt files, downloaded by a setup script
   shared/ble_contract.json  # band design: UUIDs and pattern table (not used at runtime)
-  relay/                 # Firebase Cloud Function (P2)
-  watch/applewatch/      # Swift (P2, demo-required)
-  watch/wearos/          # Kotlin (stretch)
+  watch/applewatch/      # Swift custom watch app (stretch; built and installed from Xcode with a free Apple ID)
   tests/
     unit/                # rules and state machine with synthetic features
     clips/               # consented test videos, git-ignored
@@ -420,7 +421,7 @@ focusband/
 
 - **Unit tests (pytest):** every detector, the posture score, and every state-machine transition, fed with hand-built `FrameFeatures` sequences. Target: logic modules fully covered, and the suite runs in under 10 s.
 - **Replay evaluation:** each team member records consented 3-minute clips for each scenario (focused typing, reading notes, phone, window, fidget object, away, slouching, leaning in), in daylight and lamplight. Label the start and end of each behaviour in a CSV. `eval.py` replays the clips through the real pipeline and reports detection rate and false alerts per detector.
-- **Device tests:** on one Windows and one macOS laptop — camera permission, notifications, packaged build start-up, and an Apple Watch receiving a test alert through the relay.
+- **Device tests:** on one Windows and one macOS laptop — camera permission, notifications, packaged build start-up, and an Apple Watch receiving a test alert through ntfy.
 - **Soak test:** a 60-minute genuine work session on each OS, checking CPU, memory growth and false alerts.
 
 **Acceptance criteria for the demo**
@@ -429,13 +430,13 @@ focusband/
 - [ ] No more than 1 false alert in a 30-minute focused session.
 - [ ] Slouching and leaning in held for 2 minutes trigger a posture buzz and the correct tip.
 - [ ] At least 15 fps on the slowest team laptop with the overlay on.
-- [ ] Alerts reach the desktop within 1 s when no watch is paired, and reach a paired Apple Watch within 5 s through the relay.
+- [ ] Alerts reach the desktop within 1 s when no watch is paired, and reach a paired Apple Watch within 5 s through ntfy.
 - [ ] The session report matches the events logged during the session.
 - [ ] A search of the app data folder after a session finds no image or video files.
 
 ## 13. Two-week plan, IBM Bob and risks
 
-The P0 demo works end to end on desktop notifications by day 5. The relay is built early (days 6–7) so the Apple Watch app, which starts after the P0 and P1 freeze on day 10, only has to receive pushes. Developer A owns vision and logic; developer B owns the app shell, UI, storage and alerts. The three hardware teammates design and present the band concept and also record and label test clips.
+The P0 demo works end to end on desktop notifications by day 5. The ntfy sink is built early (days 6–7), so the Apple Watch already gets alerts before the P0 and P1 freeze on day 10; days 10–12 go to the optional custom watch app. Developer A owns vision and logic; developer B owns the app shell, UI, storage and alerts. The three hardware teammates design and present the band concept and also record and label test clips.
 
 | Who | Task | Days |
 | --- | --- | --- |
@@ -449,19 +450,19 @@ The P0 demo works end to end on desktop notifications by day 5. The relay is bui
 | Developer B | Qt shell, threads, storage | 1–2 |
 | Developer B | Session screen and notifications | 3–4 |
 | Developer B | Settings and calibration wizard | 5 |
-| Developer B | Band stub sink, relay endpoints (`/register`, `/pair`, `/alert`) | 6–7 |
+| Developer B | Band stub sink, ntfy sink, pairing screen with QR code | 6–7 |
 | Developer B | Report and dashboard | 8–9 |
-| Developer B | Apple Watch app (P2, demo-required); Wear OS only if it works early | 10–12 |
+| Developer B | Custom Apple Watch app (stretch); Wear OS check with the ntfy Android app | 10–12 |
 | Both developers | Packaging, fixes, demo prep | 13–14 |
 | Hardware team | Band concept: design, mock-up and presentation of how it would work | 1–7 |
 | Hardware team | Record and label test clips | 4–5 |
 
-Milestones: interfaces agreed (day 1), Apple Developer account and Xcode Mac confirmed (day 2), P0 demo on desktop (day 5), relay deployed (day 7), **P0 and P1 freeze (day 10)**, Apple Watch receives a live alert (day 12), final demo (day 14). Days 11 and 12 hold the Apple Watch work, so a slip in the core plan eats into Wear OS and the desk-object fine-tune first.
+Milestones: interfaces agreed (day 1), P0 demo on desktop (day 5), Apple Watch receives a live alert through ntfy (day 7), **P0 and P1 freeze (day 10)**, final demo (day 14). Days 11 and 12 hold stretch work (custom watch app, desk-object fine-tune), so a slip in the core plan eats into stretch work rather than the demo.
 
 **Handoffs that keep the two developers unblocked**
 
 - Day 1: agree on `FrameFeatures`, `Alert` and the `AlertSink` interface (sections 5 and 9) before writing code. B builds the UI against a fake feature stream; A tests rules without the UI.
-- Day 7: the relay is deployed and testable with `curl`, so the Apple Watch app only has to register and receive pushes.
+- Day 7: the ntfy topic is testable with `curl -d "test" ntfy.sh/<topic>`, so the watch route can be checked before the desktop sink is finished.
 - Days 4 and 5: hardware teammates record and label the replay clips (section 12).
 
 **Using IBM Bob**
@@ -480,8 +481,9 @@ Milestones: interfaces agreed (day 1), Apple Developer account and Xcode Mac con
 | A bright window behind the user ruins face tracking | Medium | Warn when face confidence is low; recommend the camera faces away from windows |
 | Too slow on older laptops | Medium | The performance fallback order in section 5; profile on the slowest laptop by day 4 |
 | macOS camera permission or packaging problems | Medium | Test the packaged build by day 10; demo from source as a fallback |
-| Apple Watch blocked by accounts or tooling | Medium | It needs the paid Apple Developer Program (for APNs) and a Mac with Xcode; confirm both by day 2 |
-| Watch apps don't fit in the time | High | Cut Wear OS first; Apple Watch must stay. If it slips, use the ntfy Plan B to get alerts onto the watch for the demo |
+| ntfy.sh is down or rate-limits during the demo | Low | Desktop notification still fires (fallback sink); ntfy can be self-hosted on a laptop if needed |
+| Watch doesn't show mirrored notifications | Medium | Check the iPhone Watch app's notification mirroring for ntfy and that the watch isn't in Do Not Disturb; test by day 7 |
+| Custom watch app doesn't fit in the time | High | It is stretch; the ntfy route already meets the demo requirement |
 | False alerts annoy users | Medium | 1-minute threshold, 5 s focus reset, Snooze, and replay tuning on days 9 and 10 |
 
 ## Sources
@@ -490,5 +492,4 @@ Milestones: interfaces agreed (day 1), Apple Developer account and Xcode Mac con
 - [MediaPipe PoseLandmarker Python API](https://developers.google.com/edge/api/mediapipe/python/mp/tasks/vision/PoseLandmarker)
 - [MediaPipe: Tasks API replaces the legacy Solutions API (MGT-python wiki)](https://github.com/fourMs/MGT-python/wiki/10-%E2%80%90-Pose-and-Motion-Capture)
 - [Ultralytics YOLO26 and licensing](https://docs.ultralytics.com/)
-- [Firebase Apple SDK: watchOS is community-supported](https://github.com/Notsfsssf/firebase-ios-sdk)
 - [ntfy push notification service](https://github.com/binwiederhier/ntfy/blob/9f052bdf8b8094adb05b39c55a7e783bf51d51e5/README.md)
