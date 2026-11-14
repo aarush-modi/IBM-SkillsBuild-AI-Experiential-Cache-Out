@@ -37,11 +37,12 @@ class Detection:
 @dataclass(frozen=True)
 class FrameFeatures:
     t: float                      # seconds since session start
-    person_present: bool
+    person_present: bool          # a pose was detected this frame
+    shoulder_visibility: float | None  # lower of the two shoulders' visibility, 0 to 1
     head_yaw: float | None        # degrees, 0 = facing camera
     head_pitch: float | None      # degrees, negative = looking down
     head_roll: float | None
-    shoulder_width: float | None  # normalized image units
+    shoulder_width: float | None  # frame-width units
     shoulder_angle: float | None  # degrees from horizontal
     nose_to_shoulder_y: float | None  # vertical gap, divided by shoulder width
     face_width: float | None      # proxy for distance to screen
