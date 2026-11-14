@@ -84,6 +84,7 @@ def head_angles(matrix: FloatArray) -> tuple[float, float, float]:
 class ShoulderMetrics:
     width: float
     angle: float               # degrees; positive when the image-right shoulder is higher
+    mid: tuple[float, float]   # midpoint, frame-width units
     nose_to_shoulder_y: float  # gap from nose up to shoulder midpoint, / shoulder width
     visibility: float          # lower of the two shoulders
 
@@ -96,10 +97,10 @@ def shoulder_metrics(pose: FloatArray, aspect: float) -> ShoulderMetrics | None:
     if width <= 0:
         return None
     angle = math.degrees(math.atan2(-(b[1] - a[1]), b[0] - a[0]))  # image y points down
-    mid_y = (a[1] + b[1]) / 2
-    gap = float(mid_y - pts[NOSE][1]) / width
+    mid = (float(a[0] + b[0]) / 2, float(a[1] + b[1]) / 2)
+    gap = (mid[1] - float(pts[NOSE][1])) / width
     vis = float(min(pose[LEFT_SHOULDER, 3], pose[RIGHT_SHOULDER, 3]))
-    return ShoulderMetrics(width=width, angle=angle, nose_to_shoulder_y=gap, visibility=vis)
+    return ShoulderMetrics(width=width, angle=angle, mid=mid, nose_to_shoulder_y=gap, visibility=vis)
 
 
 def face_width(face: FloatArray, aspect: float) -> float:
@@ -165,6 +166,7 @@ def build_features(
         head_roll=roll,
         shoulder_width=sm.width if sm else None,
         shoulder_angle=sm.angle if sm else None,
+        shoulder_mid=sm.mid if sm else None,
         nose_to_shoulder_y=sm.nose_to_shoulder_y if sm else None,
         face_width=face_width(raw.face, aspect) if raw.face is not None else None,
         hands=[hand_info(h, grasp_curl_ratio, work_zone) for h in raw.hands],
@@ -178,6 +180,7 @@ SMOOTHED_FIELDS = (
     "shoulder_visibility", "head_yaw", "head_pitch", "head_roll",
     "shoulder_width", "shoulder_angle", "nose_to_shoulder_y", "face_width",
 )
+SMOOTHED_POINTS = ("shoulder_mid",)  # (x, y) pairs, each coordinate averaged on its own
 
 
 class FeatureSmoother:
@@ -191,6 +194,7 @@ class FeatureSmoother:
     def __init__(self, alpha: float) -> None:
         self.alpha = alpha
         self._state: dict[str, float] = {}
+        self._points: dict[str, tuple[float, float]] = {}
 
     @classmethod
     def from_settings(cls, settings: dict[str, Any]) -> FeatureSmoother:
@@ -198,17 +202,33 @@ class FeatureSmoother:
 
     def reset(self) -> None:
         self._state.clear()
+        self._points.clear()
+
+    def _ema(self, prev: float | None, value: float) -> float:
+        return value if prev is None else prev + self.alpha * (value - prev)
 
     def update(self, f: FrameFeatures) -> FrameFeatures:
-        smoothed: dict[str, float | None] = {}
+        smoothed: dict[str, float | tuple[float, float] | None] = {}
         for name in SMOOTHED_FIELDS:
             value: float | None = getattr(f, name)
             if value is None:
                 self._state.pop(name, None)
                 smoothed[name] = None
                 continue
-            prev = self._state.get(name)
-            new = value if prev is None else prev + self.alpha * (value - prev)
+            new = self._ema(self._state.get(name), value)
             self._state[name] = new
             smoothed[name] = new
+        for name in SMOOTHED_POINTS:
+            point: tuple[float, float] | None = getattr(f, name)
+            if point is None:
+                self._points.pop(name, None)
+                smoothed[name] = None
+                continue
+            prev_pt = self._points.get(name)
+            new_pt = (
+                self._ema(prev_pt[0] if prev_pt else None, point[0]),
+                self._ema(prev_pt[1] if prev_pt else None, point[1]),
+            )
+            self._points[name] = new_pt
+            smoothed[name] = new_pt
         return replace(f, **smoothed)  # type: ignore[arg-type]

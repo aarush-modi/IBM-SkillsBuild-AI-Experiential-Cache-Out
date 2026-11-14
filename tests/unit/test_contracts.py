@@ -13,7 +13,7 @@ def make_features(**overrides: object) -> FrameFeatures:
     base: dict[str, object] = dict(
         t=0.0, person_present=True, shoulder_visibility=0.99,
         head_yaw=0.0, head_pitch=0.0, head_roll=0.0,
-        shoulder_width=0.3, shoulder_angle=0.0, nose_to_shoulder_y=0.8, face_width=0.2,
+        shoulder_width=0.3, shoulder_angle=0.0, shoulder_mid=(0.5, 0.45), nose_to_shoulder_y=0.8, face_width=0.2,
         hands=[HandInfo(bbox=(0.4, 0.7, 0.5, 0.8), grasp=False, near_keyboard=True)],
         objects=[Detection(cls="keyboard", confidence=0.9, bbox=(0.3, 0.75, 0.7, 0.9))],
     )

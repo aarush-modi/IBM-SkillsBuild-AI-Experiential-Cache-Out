@@ -44,6 +44,7 @@ class FrameFeatures:
     head_roll: float | None
     shoulder_width: float | None  # frame-width units
     shoulder_angle: float | None  # degrees from horizontal
+    shoulder_mid: tuple[float, float] | None  # shoulder midpoint (x, y), frame-width units
     nose_to_shoulder_y: float | None  # vertical gap, divided by shoulder width
     face_width: float | None      # proxy for distance to screen
     hands: list[HandInfo]

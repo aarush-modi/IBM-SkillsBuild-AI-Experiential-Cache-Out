@@ -153,6 +153,7 @@ class FrameFeatures:
     head_roll: float | None
     shoulder_width: float | None  # frame-width units
     shoulder_angle: float | None  # degrees from horizontal
+    shoulder_mid: tuple[float, float] | None  # shoulder midpoint (x, y), frame-width units
     nose_to_shoulder_y: float | None  # vertical gap, divided by shoulder width
     face_width: float | None      # proxy for distance to screen
     hands: list[HandInfo]         # bbox, grasp flag, near_keyboard flag
@@ -186,11 +187,13 @@ Posture is judged as change from the user's own calibrated upright posture, not 
 
 **Calibration (about 30 s, in the wizard and from Settings)**
 
-1. **Upright baseline, 10 s [`calibration.upright_s`]:** "Sit tall, shoulders back, look at your screen." Store the median of every posture metric and of head yaw and pitch.
-2. **Window direction, 3 s [`calibration.window_s`], optional:** "Look out your window." Store head yaw.
-3. **Work zone, 3 s [`calibration.work_zone_s`]:** "Put your hands on your keyboard." Store the box around both hands, enlarged by 30% [`calibration.work_zone_pad`].
+1. **Upright baseline, 10 s [`calibration.upright_s`]:** "Sit tall, shoulders back, look at your screen." Store the median of every posture metric, of head yaw and pitch, and of the shoulder midpoint. A frame counts only if a pose and a face are found and shoulder visibility is at least [`detectors.away_shoulder_vis`].
+2. **Window direction, 3 s [`calibration.window_s`], optional:** "Look out your window." Store the median head yaw. It fails if that yaw is within [`detectors.look_yaw_deg`] of the screen baseline, because the window could then never be told apart from the screen; the user can skip the step.
+3. **Work zone, 3 s [`calibration.work_zone_s`]:** "Put both hands on your keyboard." Both hands must be seen. Store the median box around both hands, with its width and height enlarged by 30% [`calibration.work_zone_pad`] about its centre and clamped to the frame.
 
-At session start, if the shoulder midpoint has moved more than 15% of frame width [`calibration.recalibrate_shift`] from the stored baseline, the app suggests recalibrating, because the camera has probably moved.
+Each step passes when at least 80% of its frames [`calibration.min_valid_ratio`] count; otherwise the wizard shows a retry with the reason (for example "Move back or tilt the camera down so both shoulders are in view"). The result is saved as one row in the `calibration` table; the newest row is the one in use.
+
+At session start, the app watches the first 3 s [`calibration.recalibrate_check_s`]. If the median shoulder midpoint has moved more than 15% of frame width [`calibration.recalibrate_shift`] from the stored baseline, it suggests recalibrating, because the camera has probably moved.
 
 **Metrics** (thresholds in the `posture` block of `settings.json`)
 
@@ -392,7 +395,8 @@ Settings live in `settings.json` next to the database. These defaults are the si
   },
   "calibration": {
     "upright_s": 10, "window_s": 3, "work_zone_s": 3,
-    "work_zone_pad": 0.3, "recalibrate_shift": 0.15
+    "work_zone_pad": 0.3, "recalibrate_shift": 0.15,
+    "min_valid_ratio": 0.8, "recalibrate_check_s": 3
   },
   "posture": {
     "slouch_pct": 15, "lean_pct": 20, "neck_pitch_deg": 20,
