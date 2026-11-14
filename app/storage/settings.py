@@ -34,6 +34,7 @@ DEFAULTS: dict[str, Any] = {
     "posture_cooldown_s": 300,
     "snooze_s": 600,
     "auto_pause_away_s": 600,
+    "delete_sessions_after_days": None,
 
     "vision": {
         "capture_width": 640, "capture_height": 480, "capture_fps": 30,

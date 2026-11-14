@@ -49,11 +49,11 @@ FocusBand has no accounts, no server of its own and no cloud AI APIs, so the ris
 | --- | --- | --- | --- |
 | Someone learns the ntfy topic and reads alerts | Low | Topic from secrets.token_urlsafe(24) (about 190 bits). Stored only in the OS keychain via keyring. Never logged, never in settings.json or the database, and stripped from error messages. QR code shown only on the pairing screen | alerts/ntfy.py, pairing screen (P2) |
 | A leaked topic stays usable forever | Low | Re-pair watch button makes a new topic and QR code; the old topic is forgotten | Pairing screen (P2) |
-| Alert content reveals personal details | Low | Messages carry only a generic title ("FocusBand: distraction" / "FocusBand: posture") and the pattern number. No session details, names, images or landmarks | alerts/ntfy.py (P2) |
+| Alert content reveals personal details | Low | Messages carry only kind, label, pattern and timestamp, as a short title and body such as "Phone — 1 min" (section 9). No session details, names, images or landmarks | alerts/ntfy.py (P2) |
 | No working keyring on the system | Low | Refuse to pair and explain why; never fall back to storing the topic in a file | alerts/ntfy.py (P2) |
 | Another user on the same computer reads the app data | Low | App data folder 0700 and files 0600 on macOS; on Windows, the per-user %APPDATA% folder | storage/settings.py, storage/db.py |
 | Laptop stolen or disk copied | Low | The database holds no images, only times, labels and scores. The consent screen recommends FileVault or BitLocker. No app-level database encryption, because SQLCipher adds a native dependency and key handling for little gain | Welcome and consent screen (P0) |
-| User wants their data gone | — | Delete my data removes the database, settings and keychain entry. Optional automatic deletion of sessions older than N days | Welcome screen (P0), Settings |
+| User wants their data gone | — | Delete my data removes the database, settings and keychain entry. Optional automatic deletion of sessions older than N days [`delete_sessions_after_days`], off by default | Welcome screen (P0), Settings |
 | A swapped or tampered model file runs code (.pt uses pickle) | Low | Model URLs pinned to fixed versions, with size and SHA-256 checked before use | scripts/download_models.py (done) |
 | Third-party libraries send telemetry | Medium | Ultralytics analytics off (YOLO_OFFLINE=1, event queue disabled), guarded by tests | vision/objects.py (done) |
 | Frames, landmarks or the topic leak into logs or files | Low | No frame writes in app code. Acceptance check: after a session, the app data folder has no image or video files and no copy of the topic | Section 12 acceptance criteria |
@@ -393,6 +393,7 @@ Settings live in `settings.json` next to the database. These defaults are the si
   "posture_cooldown_s": 300,
   "snooze_s": 600,
   "auto_pause_away_s": 600,
+  "delete_sessions_after_days": null,
 
   "vision": {
     "capture_width": 640, "capture_height": 480, "capture_fps": 30,
@@ -426,6 +427,8 @@ Settings live in `settings.json` next to the database. These defaults are the si
 ```
 
 The ntfy topic is stored in the OS keychain (via the `keyring` package), not in plain JSON; the JSON keeps only a flag that a watch is paired and the server URL.
+
+`delete_sessions_after_days` is off (`null`) by default. When set to N, sessions that started more than N days ago are deleted at app start, together with their `events` and `posture_samples` rows. Calibration rows are kept. The Settings screen offers off, 7, 30 or 90 days.
 
 ## 12. Repository, testing and acceptance
 
