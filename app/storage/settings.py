@@ -39,6 +39,12 @@ DEFAULTS: dict[str, Any] = {
         "capture_width": 640, "capture_height": 480, "capture_fps": 30,
         "yolo_every_n": 3, "yolo_imgsz": 416, "hands_every_n": 1,
         "shoulders_missing_warn_s": 5, "max_read_failures": 30,
+        "mp_min_confidence": 0.5, "yolo_conf": 0.25, "grasp_curl_ratio": 1.4,
+        "yolo_classes": [
+            "cell phone", "keyboard", "mouse", "laptop", "book", "cup", "bottle", "wine glass", "remote",
+            "scissors", "sports ball", "teddy bear", "toothbrush", "fork", "knife", "spoon",
+            "banana", "apple", "orange", "clock", "vase", "frisbee",
+        ],
     },
     "smoothing": {"ema_alpha": 0.3, "bool_window_s": 2, "bool_ratio": 0.7},
     "detectors": {

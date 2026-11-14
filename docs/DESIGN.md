@@ -135,28 +135,33 @@ Each frame runs through the three MediaPipe landmarkers, YOLO runs on every thir
 **Per-frame steps**
 
 1. **Capture** at 640 × 480, 30 fps [`vision.capture_width`, `capture_height`, `capture_fps`]; mirror it; wrap it as an `mp.Image` with a timestamp in milliseconds. If the camera ignores the requested size and delivers another aspect ratio, centre-crop to 4:3 before resizing; never stretch, because stretching distorts shoulder width, face width and head yaw. If the camera returns no frame 30 times in a row [`vision.max_read_failures`], capture stops with a "Camera not responding" error instead of hanging.
-2. **Pose:** PoseLandmarker, *lite* model, `VIDEO` running mode, one person. Keep nose, eyes, ears, shoulders, elbows and wrists, with their visibility scores.
-3. **Face:** FaceLandmarker with `output_facial_transformation_matrixes=True`. Convert the matrix to yaw, pitch and roll in degrees. Iris points are kept for optional gaze refinement later.
-4. **Hands:** HandLandmarker, up to two hands. Compute a bounding box and a "grasp" flag (fingertips curled toward the palm) for each hand.
-5. **Objects:** YOLO26n at image size 416 [`vision.yolo_imgsz`], every 3rd frame [`vision.yolo_every_n`] (about 10 Hz), filtered to COCO classes the rules use. Between YOLO frames, the last detections are reused.
+2. **Pose:** PoseLandmarker, *lite* model, `VIDEO` running mode, one person. Keep nose, eyes, ears, shoulders, elbows and wrists, with their visibility scores. All three landmarkers use a minimum detection, presence and tracking confidence of 0.5 [`vision.mp_min_confidence`].
+3. **Face:** FaceLandmarker with `output_facial_transformation_matrixes=True`. Convert the matrix to yaw, pitch and roll in degrees (yaw positive when the user turns to their right in the mirrored view, pitch negative when looking down, roll positive when the head tips toward the user's left shoulder). Iris points are kept for optional gaze refinement later.
+4. **Hands:** HandLandmarker, up to two hands. Compute a bounding box and a "grasp" flag for each hand. Grasp uses the 3D world landmarks so it does not depend on how the hand faces the camera: for the four fingers, the mean of fingertip-to-wrist distance divided by knuckle-to-wrist distance is under 1.4 [`vision.grasp_curl_ratio`] (an open hand is about 1.8, a fist about 0.8). `near_keyboard` is true when the centre of the hand box lies inside the calibrated work zone, and false before calibration.
+5. **Objects:** YOLO26n at image size 416 [`vision.yolo_imgsz`], every 3rd frame [`vision.yolo_every_n`] (about 10 Hz), keeping boxes with confidence of at least 0.25 [`vision.yolo_conf`] (the phone rule applies its own, higher threshold). Only the classes in [`vision.yolo_classes`] are kept: cell phone, the work-list classes and small handheld objects. People, furniture and screens are dropped, so a hand resting on the desk never counts as holding a `dining table`. Between YOLO frames, the last detections are reused.
 6. **Features:** build `FrameFeatures` (below).
-7. **Smoothing:** exponential moving average on angles and distances (alpha 0.3 [`smoothing.ema_alpha`]). Each boolean signal is "on" only when it holds in at least 70% of frames [`smoothing.bool_ratio`] over a rolling 2 s window [`smoothing.bool_window_s`].
+7. **Smoothing:** exponential moving average on angles, distances and shoulder visibility (alpha 0.3 [`smoothing.ema_alpha`]), done in `vision/features.py`. A value that goes missing is reported as `None` and its average restarts when it comes back. Each detector's yes/no signal is "on" only when it holds in at least 70% of frames [`smoothing.bool_ratio`] over a rolling 2 s window [`smoothing.bool_window_s`]; that smoothing lives in `logic/detectors.py`, because the signals it smooths are judgements.
 
 ```python
 @dataclass(frozen=True)
 class FrameFeatures:
     t: float                      # seconds since session start
-    person_present: bool
+    person_present: bool          # a pose was detected this frame
+    shoulder_visibility: float | None  # lower of the two shoulders' visibility, 0 to 1
     head_yaw: float | None        # degrees, 0 = facing camera
     head_pitch: float | None      # degrees, negative = looking down
     head_roll: float | None
-    shoulder_width: float | None  # normalized image units
+    shoulder_width: float | None  # frame-width units
     shoulder_angle: float | None  # degrees from horizontal
     nose_to_shoulder_y: float | None  # vertical gap, divided by shoulder width
     face_width: float | None      # proxy for distance to screen
     hands: list[HandInfo]         # bbox, grasp flag, near_keyboard flag
     objects: list[Detection]      # class, confidence, bbox
 ```
+
+All distances (shoulder width, face width, the nose-to-shoulder gap, `phone_hand_dist`) are in frame-width units: y is scaled by height ÷ width first, so a distance means the same horizontally and vertically. Boxes stay in normalized 0 to 1 coordinates on each axis.
+
+Alongside each `FrameFeatures`, the vision thread sends the UI a `PreviewFrame` (newest image, raw pose and hand points, object boxes) for the live overlay. It lives only in memory and never reaches the logic thread.
 
 **Performance budget:** 15 fps means about 66 ms per frame on the vision thread. If profiling on the slowest team laptop shows more than that, drop in this order: hands on every 2nd frame (`vision.hands_every_n` = 2), YOLO every 5th frame (`vision.yolo_every_n` = 5), then capture at 15 fps (`vision.capture_fps` = 15). These are settings changes, not code changes. The UI preview always shows the newest frame and never waits for the models.
 
@@ -169,7 +174,7 @@ Each detector turns smoothed features into one yes or no per frame; the 1-minute
 | Phone | YOLO `cell phone`, hand boxes, head pitch | A phone with confidence of at least 0.45 [`phone_conf`] overlaps or sits within 0.1 frame-widths [`phone_hand_dist`] of a hand, **or** a phone is visible on the desk while head pitch is 20° or more below baseline [`phone_pitch_down_deg`] | Phone used for two-factor codes or a call → 1-minute timer plus a "Snooze 10 min" button |
 | Looking away | Head yaw and pitch | Yaw differs from baseline by more than 25° [`look_yaw_deg`], or pitch is more than 20° above baseline [`look_pitch_up_deg`]. Labelled **window** when yaw is within 15° [`window_yaw_tol_deg`] of the calibrated window direction | Looking down at notes is not counted: pitch down with hands on the desk or a `book` detected counts as working |
 | Desk objects | Hand boxes and grasp flags, YOLO objects, calibrated work zone | A hand is grasping and is outside the keyboard work zone, **and** it overlaps an object not on the work list (keyboard, mouse, laptop, book) or no object YOLO recognizes | Weakest detector: COCO has no class for most ornaments. Writing with a pen looks similar; the work zone and book check reduce this. Upgrade path below |
-| Away | Pose presence | No pose detected, or shoulder visibility under 0.5 [`away_shoulder_vis`], continuously for 10 s [`away_detect_s`]. Only then does the detector fire and the normal 60 s distraction hold (section 8) start, so an alert comes after about 70 s away | A user taking a break should press **Break**, which pauses detection |
+| Away | `person_present`, `shoulder_visibility` | No pose detected, or shoulder visibility under 0.5 [`away_shoulder_vis`], continuously for 10 s [`away_detect_s`]. Only then does the detector fire and the normal 60 s distraction hold (section 8) start, so an alert comes after about 70 s away | A user taking a break should press **Break**, which pauses detection |
 
 **When several fire at once**, the event takes the highest-priority label: phone, then desk objects, then looking away, then away. The UI and report show that label.
 
@@ -371,7 +376,13 @@ Settings live in `settings.json` next to the database. These defaults are the si
   "vision": {
     "capture_width": 640, "capture_height": 480, "capture_fps": 30,
     "yolo_every_n": 3, "yolo_imgsz": 416, "hands_every_n": 1,
-    "shoulders_missing_warn_s": 5, "max_read_failures": 30
+    "shoulders_missing_warn_s": 5, "max_read_failures": 30,
+    "mp_min_confidence": 0.5, "yolo_conf": 0.25, "grasp_curl_ratio": 1.4,
+    "yolo_classes": [
+      "cell phone", "keyboard", "mouse", "laptop", "book", "cup", "bottle", "wine glass", "remote",
+      "scissors", "sports ball", "teddy bear", "toothbrush", "fork", "knife", "spoon",
+      "banana", "apple", "orange", "clock", "vase", "frisbee"
+    ]
   },
   "smoothing": {"ema_alpha": 0.3, "bool_window_s": 2, "bool_ratio": 0.7},
   "detectors": {

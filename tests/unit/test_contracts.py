@@ -11,7 +11,7 @@ ROOT = Path(__file__).parents[2]
 
 def make_features(**overrides: object) -> FrameFeatures:
     base: dict[str, object] = dict(
-        t=0.0, person_present=True,
+        t=0.0, person_present=True, shoulder_visibility=0.99,
         head_yaw=0.0, head_pitch=0.0, head_roll=0.0,
         shoulder_width=0.3, shoulder_angle=0.0, nose_to_shoulder_y=0.8, face_width=0.2,
         hands=[HandInfo(bbox=(0.4, 0.7, 0.5, 0.8), grasp=False, near_keyboard=True)],
@@ -28,7 +28,7 @@ def test_frame_features_is_frozen() -> None:
 
 
 def test_absent_person_has_no_measurements() -> None:
-    f = make_features(person_present=False, head_yaw=None, shoulder_width=None, hands=[], objects=[])
+    f = make_features(person_present=False, shoulder_visibility=None, head_yaw=None, shoulder_width=None, hands=[], objects=[])
     assert f.head_yaw is None and f.hands == []
 
 
