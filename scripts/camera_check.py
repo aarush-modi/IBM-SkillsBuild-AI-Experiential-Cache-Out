@@ -31,7 +31,7 @@ def _fmt(v: float | None, unit: str = "") -> str:
 
 
 def feature_lines(f: FrameFeatures) -> list[str]:
-    grasp = ",".join(("grasp" if h.grasp else "open") + ("/kb" if h.near_keyboard else "") for h in f.hands)
+    grasp = ",".join("grasp" if h.grasp else "open" for h in f.hands)
     return [
         f"present {f.person_present}  shoulder vis {_fmt(f.shoulder_visibility)}",
         f"yaw {_fmt(f.head_yaw, 'd')}  pitch {_fmt(f.head_pitch, 'd')}  roll {_fmt(f.head_roll, 'd')}",
@@ -51,6 +51,8 @@ def put_lines(img: npt.NDArray[np.uint8], lines: list[str]) -> None:
     """Text on a translucent dark panel in the top-left corner, so it reads on any background."""
     if not lines:
         return
+    # OpenCV's Hershey fonts are ASCII only: "°" would draw as "??".
+    lines = [t.replace("°", "d").encode("ascii", "replace").decode() for t in lines]
     width = max(cv2.getTextSize(t, FONT, FONT_SCALE, 1)[0][0] for t in lines)
     x0, y0 = 6, 6
     x1 = min(img.shape[1], x0 + width + 2 * PAD)

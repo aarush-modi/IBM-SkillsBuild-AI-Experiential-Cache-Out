@@ -130,18 +130,8 @@ def curl_ratio(world: FloatArray) -> float:
     return sum(ratios) / len(ratios) if ratios else math.inf
 
 
-def _centre_in(box: BBox, zone: BBox) -> bool:
-    cx, cy = (box[0] + box[2]) / 2, (box[1] + box[3]) / 2
-    return zone[0] <= cx <= zone[2] and zone[1] <= cy <= zone[3]
-
-
-def hand_info(hand: RawHand, grasp_curl_ratio: float, work_zone: BBox | None) -> HandInfo:
-    box = hand_bbox(hand)
-    return HandInfo(
-        bbox=box,
-        grasp=curl_ratio(hand.world) < grasp_curl_ratio,
-        near_keyboard=work_zone is not None and _centre_in(box, work_zone),
-    )
+def hand_info(hand: RawHand, grasp_curl_ratio: float) -> HandInfo:
+    return HandInfo(bbox=hand_bbox(hand), grasp=curl_ratio(hand.world) < grasp_curl_ratio)
 
 
 def build_features(
@@ -150,7 +140,6 @@ def build_features(
     t: float,
     aspect: float,
     grasp_curl_ratio: float,
-    work_zone: BBox | None = None,
 ) -> FrameFeatures:
     """Unsmoothed FrameFeatures for one frame. aspect is image height / width."""
     sm = shoulder_metrics(raw.pose, aspect) if raw.pose is not None else None
@@ -169,7 +158,7 @@ def build_features(
         shoulder_mid=sm.mid if sm else None,
         nose_to_shoulder_y=sm.nose_to_shoulder_y if sm else None,
         face_width=face_width(raw.face, aspect) if raw.face is not None else None,
-        hands=[hand_info(h, grasp_curl_ratio, work_zone) for h in raw.hands],
+        hands=[hand_info(h, grasp_curl_ratio) for h in raw.hands],
         objects=list(objects),
     )
 

@@ -9,7 +9,7 @@ from typing import Any
 
 import pytest
 
-from app.contracts import FrameFeatures, HandInfo
+from app.contracts import FrameFeatures
 from app.logic import calibration as C
 from app.storage.settings import DEFAULTS
 
@@ -30,10 +30,6 @@ def feat(t: float, **kw: Any) -> FrameFeatures:
     )
     base.update(kw)
     return FrameFeatures(**base)
-
-
-def hands(left: tuple[float, float, float, float], right: tuple[float, float, float, float]) -> list[HandInfo]:
-    return [HandInfo(bbox=left, grasp=False, near_keyboard=False), HandInfo(bbox=right, grasp=False, near_keyboard=False)]
 
 
 def run(step: C._Step[Any], seconds: float, make: Any = None) -> None:
@@ -136,32 +132,18 @@ def test_window_yaw_is_stored() -> None:
 def test_window_too_close_to_screen_fails() -> None:
     b = baseline()
     step = C.WindowStep(settings(), b)
-    run(step, 3, lambda i, t: feat(t, head_yaw=b.head_yaw + DEFAULTS["detectors"]["look_yaw_deg"] - 1))
+    run(step, 3, lambda i, t: feat(t, head_yaw=b.head_yaw + 12))
     r = step.result()
-    assert not r.passed and r.reason == C.WINDOW_TOO_CLOSE
+    assert not r.passed and r.reason is not None
+    # The message reports what was measured, so a failing setup can be diagnosed.
+    assert r.reason.startswith("Your head turned only 12° from the screen; it needs more than 25°.")
 
 
-# --- work zone ---------------------------------------------------------------------------
-
-def test_work_zone_is_padded_box_around_both_hands() -> None:
-    step = C.WorkZoneStep(settings())
-    run(step, 3, lambda i, t: feat(t, hands=hands((0.3, 0.7, 0.4, 0.8), (0.6, 0.72, 0.7, 0.82))))
-    r = step.result()
-    assert r.passed and r.value is not None
-    # Box (0.3, 0.7)-(0.7, 0.82): 0.4 x 0.12, grown 30% about the centre (0.5, 0.76).
-    assert r.value == pytest.approx((0.24, 0.682, 0.76, 0.838))
-
-
-def test_work_zone_needs_both_hands() -> None:
-    step = C.WorkZoneStep(settings())
-    one = [HandInfo(bbox=(0.3, 0.7, 0.4, 0.8), grasp=False, near_keyboard=False)]
-    run(step, 3, lambda i, t: feat(t, hands=one))
-    r = step.result()
-    assert not r.passed and r.reason == C.NO_HANDS
-
-
-def test_pad_box_is_clamped_to_frame() -> None:
-    assert C.pad_box((0.0, 0.8, 0.5, 1.0), 0.3) == pytest.approx((0.0, 0.77, 0.575, 1.0))
+def test_window_to_the_other_side_also_counts() -> None:
+    b = baseline()
+    step = C.WindowStep(settings(), b)
+    run(step, 3, lambda i, t: feat(t, head_yaw=b.head_yaw - 50))
+    assert step.result().value == pytest.approx(b.head_yaw - 50)
 
 
 # --- camera shift check ---------------------------------------------------------------------
@@ -189,8 +171,14 @@ def test_camera_check_inconclusive_when_user_absent() -> None:
 # --- Calibration ------------------------------------------------------------------------------
 
 def test_calibration_round_trips_through_json() -> None:
-    cal = C.Calibration(baseline=baseline(), window_yaw=55.0, work_zone=(0.2, 0.6, 0.8, 0.9))
+    cal = C.Calibration(baseline=baseline(), window_yaw=55.0)
     again = C.Calibration.from_dict(json.loads(json.dumps(cal.to_dict())))
     assert again == cal
     skipped = replace(cal, window_yaw=None)
     assert C.Calibration.from_dict(json.loads(json.dumps(skipped.to_dict()))) == skipped
+
+
+def test_old_calibration_with_work_zone_still_loads() -> None:
+    d = C.Calibration(baseline=baseline(), window_yaw=None).to_dict()
+    d["work_zone"] = [0.2, 0.6, 0.8, 0.9]
+    assert C.Calibration.from_dict(d).window_yaw is None

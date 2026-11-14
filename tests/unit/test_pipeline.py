@@ -96,13 +96,6 @@ def test_preview_carries_frame_points_and_boxes() -> None:
     assert preview.process_ms >= 0
 
 
-def test_work_zone_flows_into_hands() -> None:
-    p, _, _ = make()
-    assert not p.process(frame(1000))[0].hands[0].near_keyboard
-    p.work_zone = (0.4, 0.4, 0.6, 0.6)
-    assert p.process(frame(1033))[0].hands[0].near_keyboard
-
-
 def test_close_frees_landmarkers() -> None:
     p, lm, _ = make()
     with p:

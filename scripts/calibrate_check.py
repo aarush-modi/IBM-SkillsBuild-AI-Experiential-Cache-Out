@@ -1,4 +1,4 @@
-"""Developer check: run the three calibration steps on the webcam, then show live values
+"""Developer check: run the calibration steps on the webcam, then show live values
 relative to the new baseline. A stand-in for the Qt wizard (DESIGN §7 and §10).
 
 Usage: python scripts/calibrate_check.py [--camera N] [--save]
@@ -37,8 +37,7 @@ WRAP = 52  # characters per overlay line at 640 px wide
 INSTRUCTIONS = {
     "shift": "Sit as you normally do: checking whether the camera moved",
     "upright": "Sit tall, shoulders back, look at your screen",
-    "window": "Look out your window (s to skip)",
-    "work_zone": "Put both hands on your keyboard",
+    "window": "Turn your head toward your window (s to skip)",
 }
 
 
@@ -52,27 +51,26 @@ def _pct(v: float | None, base: float) -> str:
 
 def live_lines(f: FrameFeatures, cal: C.Calibration) -> list[str]:
     b = cal.baseline
-    on_kb = ",".join("kb" if h.near_keyboard else "off" for h in f.hands) or "-"
-    window = f"{cal.window_yaw:+.0f}d" if cal.window_yaw is not None else "skipped"
+    window = f"{cal.window_yaw - b.head_yaw:+.0f}d" if cal.window_yaw is not None else "skipped"
     return [
         "Calibrated. Change from baseline:",
         f"yaw {_d(f.head_yaw, b.head_yaw)}  pitch {_d(f.head_pitch, b.head_pitch)}  roll {_d(f.head_roll, b.head_roll)}",
         f"nose-shoulder gap {_pct(f.nose_to_shoulder_y, b.nose_to_shoulder_y)}  face width {_pct(f.face_width, b.face_width)}",
-        f"shoulder angle {_d(f.shoulder_angle, b.shoulder_angle)}  hands [{on_kb}]  window yaw {window}",
+        f"shoulder angle {_d(f.shoulder_angle, b.shoulder_angle)}  window at {window}",
     ]
 
 
 class Wizard:
-    """Steps through shift check (if any) -> upright -> window -> work zone -> live."""
+    """Steps through shift check (if any) -> upright -> window -> live."""
 
     def __init__(self, settings: dict[str, Any], existing: C.Calibration | None) -> None:
         self.s = settings
         self.existing = existing
-        self.phases = (["shift"] if existing else []) + ["upright", "window", "work_zone"]
+        self.phases = (["shift"] if existing else []) + ["upright", "window"]
         self.index = 0
         self.baseline: C.Baseline | None = None
         self.window_yaw: float | None = None
-        self.work_zone: Any = None
+        self.last: FrameFeatures | None = None
         self.calibration: C.Calibration | None = None
         self._begin()
 
@@ -92,20 +90,19 @@ class Wizard:
             return C.CameraShiftCheck(self.s, self.existing.baseline)
         if self.phase == "upright":
             return C.UprightStep(self.s)
-        if self.phase == "window":
-            assert self.baseline is not None
-            return C.WindowStep(self.s, self.baseline)
-        return C.WorkZoneStep(self.s)
+        assert self.phase == "window" and self.baseline is not None
+        return C.WindowStep(self.s, self.baseline)
 
     def _advance(self) -> None:
         self.index += 1
         if self.phase == "live":
-            assert self.baseline is not None and self.work_zone is not None
-            self.calibration = C.Calibration(self.baseline, self.window_yaw, self.work_zone)
+            assert self.baseline is not None
+            self.calibration = C.Calibration(self.baseline, self.window_yaw)
         else:
             self._begin()
 
     def feed(self, f: FrameFeatures) -> None:
+        self.last = f
         if self.phase == "live" or self.result is not None:
             if self.result is not None and self.result.passed and time.monotonic() - self.result_at > SHOW_RESULT_S:
                 self._advance()
@@ -125,8 +122,6 @@ class Wizard:
                     self.baseline = self.result.value
                 elif self.phase == "window":
                     self.window_yaw = self.result.value
-                elif self.phase == "work_zone":
-                    self.work_zone = self.result.value
 
     def key(self, k: int) -> None:
         if self.result is not None and not self.result.passed and k == ord("r"):
@@ -135,9 +130,22 @@ class Wizard:
             self.window_yaw = None
             self._advance()
 
+    def turn_line(self) -> str:
+        """Live head turn from the screen baseline, so a failing window step can be diagnosed."""
+        needed = self.s["detectors"]["look_yaw_deg"]
+        yaw = self.last.head_yaw if self.last else None
+        if yaw is None or self.baseline is None:
+            return f"Head turn now: no face found (needs over {needed:.0f}d)"
+        return f"Head turn now: {yaw - self.baseline.head_yaw:+.0f}d from screen (needs over {needed:.0f}d)"
+
     def lines(self) -> list[str]:
         p = self.phase
         head = f"Step {self.index + 1}/{len(self.phases)}: {INSTRUCTIONS[p]}"
+        if p == "window":
+            return self._lines(p, head) + [self.turn_line()]
+        return self._lines(p, head)
+
+    def _lines(self, p: str, head: str) -> list[str]:
         if self.result is not None:
             if p == "shift":
                 moved = self.result.value
@@ -186,10 +194,6 @@ def main() -> int:
                             db.save_calibration(cal.to_dict())
                             stored = True
                             print("Calibration saved to", db.path)
-                        pipeline.work_zone = cal.work_zone
-                        h, w = img.shape[:2]
-                        x0, y0, x1, y1 = cal.work_zone
-                        cv2.rectangle(img, (int(x0 * w), int(y0 * h)), (int(x1 * w), int(y1 * h)), (255, 160, 0), 1)
                         put_lines(img, live_lines(features, cal))
                     else:
                         put_lines(img, wizard.lines())

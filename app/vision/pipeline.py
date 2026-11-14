@@ -16,7 +16,7 @@ import cv2
 import numpy as np
 import numpy.typing as npt
 
-from app.contracts import BBox, Detection, FrameFeatures
+from app.contracts import Detection, FrameFeatures
 from app.vision.capture import Frame
 from app.vision.features import POSE_KEEP, FeatureSmoother, RawHand, RawLandmarks, build_features
 
@@ -62,13 +62,11 @@ class VisionPipeline:
         settings: dict[str, Any],
         landmarkers: LandmarkerLike,
         objects: ObjectDetectorLike,
-        work_zone: BBox | None = None,
     ) -> None:
         v = settings["vision"]
         self.yolo_every_n: int = max(1, v["yolo_every_n"])
         self.hands_every_n: int = max(1, v["hands_every_n"])
         self.grasp_curl_ratio: float = v["grasp_curl_ratio"]
-        self.work_zone = work_zone  # set by calibration; hands are never near_keyboard before it
         self._landmarkers = landmarkers
         self._objects = objects
         self._smoother = FeatureSmoother.from_settings(settings)
@@ -78,7 +76,7 @@ class VisionPipeline:
         self._last_objects: list[Detection] = []
 
     @classmethod
-    def from_settings(cls, settings: dict[str, Any], work_zone: BBox | None = None) -> VisionPipeline:
+    def from_settings(cls, settings: dict[str, Any]) -> VisionPipeline:
         """Load the real models. Takes a few seconds; do it before opening the camera."""
         from app.vision.landmarkers import Landmarkers
         from app.vision.objects import ObjectDetector
@@ -86,7 +84,7 @@ class VisionPipeline:
         v = settings["vision"]
         detector = ObjectDetector.from_settings(settings)
         detector.warm_up(v["capture_width"], v["capture_height"])
-        return cls(settings, Landmarkers.from_settings(settings), detector, work_zone)
+        return cls(settings, Landmarkers.from_settings(settings), detector)
 
     def reset(self) -> None:
         """Start a new session: t restarts at 0 and smoothing and cached results clear."""
@@ -120,7 +118,6 @@ class VisionPipeline:
             t=(frame.timestamp_ms - self._start_ms) / 1000,
             aspect=h / w,
             grasp_curl_ratio=self.grasp_curl_ratio,
-            work_zone=self.work_zone,
         )
         features = self._smoother.update(features)
         preview = PreviewFrame(

@@ -48,7 +48,7 @@ Seventeen functional requirements; P0 items alone make a complete demo.
 | ID | Requirement | Priority |
 | --- | --- | --- |
 | FR-01 | Start, pause and end a session; show elapsed time, with an optional Pomodoro-style timer whose breaks pause detection | P0 |
-| FR-02 | Calibration wizard records a posture and head-pose baseline, and optionally the window direction and the keyboard work zone | P0 |
+| FR-02 | Calibration wizard records a posture and head-pose baseline, and optionally the window direction | P0 |
 | FR-03 | Detect phone in hand or in use | P0 |
 | FR-04 | Detect looking away from the screen, labelled "window" when calibrated | P0 |
 | FR-05 | Detect handling non-work desk objects | P0 |
@@ -137,7 +137,7 @@ Each frame runs through the three MediaPipe landmarkers, YOLO runs on every thir
 1. **Capture** at 640 × 480, 30 fps [`vision.capture_width`, `capture_height`, `capture_fps`]; mirror it; wrap it as an `mp.Image` with a timestamp in milliseconds. If the camera ignores the requested size and delivers another aspect ratio, centre-crop to 4:3 before resizing; never stretch, because stretching distorts shoulder width, face width and head yaw. If the camera returns no frame 30 times in a row [`vision.max_read_failures`], capture stops with a "Camera not responding" error instead of hanging.
 2. **Pose:** PoseLandmarker, *lite* model, `VIDEO` running mode, one person. Keep nose, eyes, ears, shoulders, elbows and wrists, with their visibility scores. All three landmarkers use a minimum detection, presence and tracking confidence of 0.5 [`vision.mp_min_confidence`].
 3. **Face:** FaceLandmarker with `output_facial_transformation_matrixes=True`. Convert the matrix to yaw, pitch and roll in degrees (yaw positive when the user turns to their right in the mirrored view, pitch negative when looking down, roll positive when the head tips toward the user's left shoulder). Iris points are kept for optional gaze refinement later.
-4. **Hands:** HandLandmarker, up to two hands. Compute a bounding box and a "grasp" flag for each hand. Grasp uses the 3D world landmarks so it does not depend on how the hand faces the camera: for the four fingers, the mean of fingertip-to-wrist distance divided by knuckle-to-wrist distance is under 1.4 [`vision.grasp_curl_ratio`] (an open hand is about 1.8, a fist about 0.8). `near_keyboard` is true when the centre of the hand box lies inside the calibrated work zone, and false before calibration.
+4. **Hands:** HandLandmarker, up to two hands. Compute a bounding box and a "grasp" flag for each hand. Grasp uses the 3D world landmarks so it does not depend on how the hand faces the camera: for the four fingers, the mean of fingertip-to-wrist distance divided by knuckle-to-wrist distance is under 1.4 [`vision.grasp_curl_ratio`] (an open hand is about 1.8, a fist about 0.8). The keyboard is below the camera's view on a normal desk, so hands on the keyboard are not seen; a hand in frame has been lifted toward the face or desk.
 5. **Objects:** YOLO26n at image size 416 [`vision.yolo_imgsz`], every 3rd frame [`vision.yolo_every_n`] (about 10 Hz), keeping boxes with confidence of at least 0.25 [`vision.yolo_conf`] (the phone rule applies its own, higher threshold). Only the classes in [`vision.yolo_classes`] are kept: cell phone, the work-list classes and small handheld objects. People, furniture and screens are dropped, so a hand resting on the desk never counts as holding a `dining table`. Between YOLO frames, the last detections are reused.
 6. **Features:** build `FrameFeatures` (below).
 7. **Smoothing:** exponential moving average on angles, distances and shoulder visibility (alpha 0.3 [`smoothing.ema_alpha`]), done in `vision/features.py`. A value that goes missing is reported as `None` and its average restarts when it comes back. Each detector's yes/no signal is "on" only when it holds in at least 70% of frames [`smoothing.bool_ratio`] over a rolling 2 s window [`smoothing.bool_window_s`]; that smoothing lives in `logic/detectors.py`, because the signals it smooths are judgements.
@@ -156,7 +156,7 @@ class FrameFeatures:
     shoulder_mid: tuple[float, float] | None  # shoulder midpoint (x, y), frame-width units
     nose_to_shoulder_y: float | None  # vertical gap, divided by shoulder width
     face_width: float | None      # proxy for distance to screen
-    hands: list[HandInfo]         # bbox, grasp flag, near_keyboard flag
+    hands: list[HandInfo]         # bbox, grasp flag
     objects: list[Detection]      # class, confidence, bbox
 ```
 
@@ -174,7 +174,7 @@ Each detector turns smoothed features into one yes or no per frame; the 1-minute
 | --- | --- | --- | --- |
 | Phone | YOLO `cell phone`, hand boxes, head pitch | A phone with confidence of at least 0.45 [`phone_conf`] overlaps or sits within 0.1 frame-widths [`phone_hand_dist`] of a hand, **or** a phone is visible on the desk while head pitch is 20° or more below baseline [`phone_pitch_down_deg`] | Phone used for two-factor codes or a call → 1-minute timer plus a "Snooze 10 min" button |
 | Looking away | Head yaw and pitch | Yaw differs from baseline by more than 25° [`look_yaw_deg`], or pitch is more than 20° above baseline [`look_pitch_up_deg`]. Labelled **window** when yaw is within 15° [`window_yaw_tol_deg`] of the calibrated window direction | Looking down at notes is not counted: pitch down with hands on the desk or a `book` detected counts as working |
-| Desk objects | Hand boxes and grasp flags, YOLO objects, calibrated work zone | A hand is grasping and is outside the keyboard work zone, **and** it overlaps an object not on the work list (keyboard, mouse, laptop, book) or no object YOLO recognizes | Weakest detector: COCO has no class for most ornaments. Writing with a pen looks similar; the work zone and book check reduce this. Upgrade path below |
+| Desk objects | Hand boxes and grasp flags, YOLO objects | A visible hand is grasping (typing hands are below the camera's view, so a hand in frame has been lifted), **and** it overlaps an object not on the work list (keyboard, mouse, laptop, book) or no object YOLO recognizes | Weakest detector: COCO has no class for most ornaments. Writing with a pen looks similar; the book check reduces this. Upgrade path below |
 | Away | `person_present`, `shoulder_visibility` | No pose detected, or shoulder visibility under 0.5 [`away_shoulder_vis`], continuously for 10 s [`away_detect_s`]. Only then does the detector fire and the normal 60 s distraction hold (section 8) start, so an alert comes after about 70 s away | A user taking a break should press **Break**, which pauses detection |
 
 **When several fire at once**, the event takes the highest-priority label: phone, then desk objects, then looking away, then away. The UI and report show that label.
@@ -185,11 +185,10 @@ Each detector turns smoothed features into one yes or no per frame; the 1-minute
 
 Posture is judged as change from the user's own calibrated upright posture, not against fixed angles. A front-facing webcam cannot measure true spine angles, and camera height differs on every desk, but it can reliably see a user sink, lean in or tilt compared with how they sat at calibration.
 
-**Calibration (about 30 s, in the wizard and from Settings)**
+**Calibration (about 15 s, in the wizard and from Settings)**
 
 1. **Upright baseline, 10 s [`calibration.upright_s`]:** "Sit tall, shoulders back, look at your screen." Store the median of every posture metric, of head yaw and pitch, and of the shoulder midpoint. A frame counts only if a pose and a face are found and shoulder visibility is at least [`detectors.away_shoulder_vis`].
-2. **Window direction, 3 s [`calibration.window_s`], optional:** "Look out your window." Store the median head yaw. It fails if that yaw is within [`detectors.look_yaw_deg`] of the screen baseline, because the window could then never be told apart from the screen; the user can skip the step.
-3. **Work zone, 3 s [`calibration.work_zone_s`]:** "Put both hands on your keyboard." Both hands must be seen. Store the median box around both hands, with its width and height enlarged by 30% [`calibration.work_zone_pad`] about its centre and clamped to the frame.
+2. **Window direction, 3 s [`calibration.window_s`], optional:** "Turn your head toward your window." Store the median head yaw. It fails if that yaw is within [`detectors.look_yaw_deg`] of the screen baseline, because the window could then never be told apart from the screen; the retry message shows the measured angle, and the user can skip the step.
 
 Each step passes when at least 80% of its frames [`calibration.min_valid_ratio`] count; otherwise the wizard shows a retry with the reason (for example "Move back or tilt the camera down so both shoulders are in view"). The result is saved as one row in the `calibration` table; the newest row is the one in use.
 
@@ -313,7 +312,7 @@ Six screens plus a tray or menu-bar icon cover the whole flow; the session scree
 | Screen | Contents | Priority |
 | --- | --- | --- |
 | Welcome and consent | What the camera analyses, what is stored, camera permission request, link to Delete my data | P0 |
-| Calibration wizard | The three steps from section 7 with a live preview, a countdown and a pass or retry result per step | P0 |
+| Calibration wizard | The two steps from section 7 with a live preview, a countdown and a pass or retry result per step | P0 |
 | Session | Live preview with skeleton overlay toggle, "camera on" indicator, timer, focus state chip, posture score, tip banner, Pause, Break, Snooze and End buttons | P0 |
 | Settings | Thresholds from section 8, camera choice, overlay default, alert devices (watch pairing QR code and topic, Send test alert, Forget watch; band shown as "coming soon") | P0 |
 | Session report | Focus time vs total time, distractions by type with counts and minutes, posture score over the session, the 3 most common posture issues with their tips | P1 |
@@ -353,7 +352,7 @@ CREATE TABLE posture_samples (       -- one row per 10 s [posture.sample_interva
 CREATE TABLE calibration (
   id INTEGER PRIMARY KEY,
   created_at TEXT NOT NULL,
-  values_json TEXT NOT NULL          -- baseline metrics, window yaw, work zone box
+  values_json TEXT NOT NULL          -- baseline metrics, window yaw
 );
 ```
 
@@ -394,8 +393,7 @@ Settings live in `settings.json` next to the database. These defaults are the si
     "away_shoulder_vis": 0.5
   },
   "calibration": {
-    "upright_s": 10, "window_s": 3, "work_zone_s": 3,
-    "work_zone_pad": 0.3, "recalibrate_shift": 0.15,
+    "upright_s": 10, "window_s": 3, "recalibrate_shift": 0.15,
     "min_valid_ratio": 0.8, "recalibrate_check_s": 3
   },
   "posture": {

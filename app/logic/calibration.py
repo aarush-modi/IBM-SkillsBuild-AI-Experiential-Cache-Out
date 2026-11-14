@@ -1,10 +1,11 @@
 """Calibration baseline from FrameFeatures (DESIGN §7).
 
-Three steps, each fed smoothed FrameFeatures by the wizard until done():
+Two steps, each fed smoothed FrameFeatures by the wizard until done():
 
-1. UprightStep  -> Baseline (medians of every posture metric, head angles, shoulder midpoint)
-2. WindowStep   -> window yaw (optional; the user may skip it)
-3. WorkZoneStep -> work zone box around both hands, padded
+1. UprightStep -> Baseline (medians of every posture metric, head angles, shoulder midpoint)
+2. WindowStep  -> window yaw (optional; the user may skip it)
+
+There is no keyboard step: on a normal desk the keyboard is below the webcam's view.
 
 Each step's result() says whether it passed and, if not, why, in words the wizard can show.
 CameraShiftCheck runs at session start and says whether the camera has probably moved.
@@ -19,7 +20,7 @@ from dataclasses import asdict, dataclass
 from statistics import median
 from typing import Any, Generic, TypeVar
 
-from app.contracts import BBox, FrameFeatures
+from app.contracts import FrameFeatures
 
 T = TypeVar("T")
 
@@ -27,11 +28,8 @@ T = TypeVar("T")
 NO_PERSON = "We couldn't see you. Sit in front of the camera, facing the screen."
 NO_SHOULDERS = "Move back or tilt the camera down so both shoulders are in view."
 NO_FACE = "Face the screen so the camera can see your face clearly."
-WINDOW_TOO_CLOSE = (
-    "That direction is too close to your screen to tell apart. "
-    "Look further toward the window, or skip this step."
-)
-NO_HANDS = "Put both hands on the keyboard where the camera can see them."
+WINDOW_TOO_CLOSE = "Your head turned only {measured:.0f}° from the screen; it needs more than {needed:.0f}°."
+WINDOW_TOO_CLOSE_HINT = " Turn your whole head toward the window, not just your eyes, or skip this step."
 
 
 @dataclass(frozen=True)
@@ -50,7 +48,6 @@ class Baseline:
 class Calibration:
     baseline: Baseline
     window_yaw: float | None  # None when the window step was skipped
-    work_zone: BBox
 
     def to_dict(self) -> dict[str, Any]:
         """The calibration table's values_json content."""
@@ -60,12 +57,8 @@ class Calibration:
     def from_dict(cls, d: dict[str, Any]) -> Calibration:
         b = dict(d["baseline"])
         b["shoulder_mid"] = tuple(b["shoulder_mid"])
-        zone = d["work_zone"]
-        return cls(
-            baseline=Baseline(**b),
-            window_yaw=d.get("window_yaw"),
-            work_zone=(float(zone[0]), float(zone[1]), float(zone[2]), float(zone[3])),
-        )
+        # Older rows may also hold a "work_zone"; it is no longer used and is ignored.
+        return cls(baseline=Baseline(**b), window_yaw=d.get("window_yaw"))
 
 
 @dataclass(frozen=True)
@@ -184,39 +177,11 @@ class WindowStep(_Step[float]):
 
     def _finish(self) -> StepResult[float]:
         yaw = median(self._yaws)
-        if abs(yaw - self.baseline_yaw) <= self.min_yaw_diff:
-            return StepResult(None, WINDOW_TOO_CLOSE)
+        turn = abs(yaw - self.baseline_yaw)
+        if turn <= self.min_yaw_diff:
+            msg = WINDOW_TOO_CLOSE.format(measured=turn, needed=self.min_yaw_diff) + WINDOW_TOO_CLOSE_HINT
+            return StepResult(None, msg)
         return StepResult(yaw)
-
-
-class WorkZoneStep(_Step[BBox]):
-    def __init__(self, settings: dict[str, Any]) -> None:
-        c = settings["calibration"]
-        super().__init__(c["work_zone_s"], c["min_valid_ratio"])
-        self.pad: float = c["work_zone_pad"]
-        self._boxes: list[BBox] = []
-
-    def _collect(self, f: FrameFeatures) -> str | None:
-        if len(f.hands) < 2:
-            return NO_HANDS
-        boxes = [h.bbox for h in f.hands]
-        self._boxes.append((
-            min(b[0] for b in boxes), min(b[1] for b in boxes),
-            max(b[2] for b in boxes), max(b[3] for b in boxes),
-        ))
-        return None
-
-    def _finish(self) -> StepResult[BBox]:
-        x0, y0, x1, y1 = (median(b[i] for b in self._boxes) for i in range(4))
-        return StepResult(pad_box((x0, y0, x1, y1), self.pad))
-
-
-def pad_box(box: BBox, pad: float) -> BBox:
-    """Grow width and height by `pad` (0.3 = 30%) about the centre, clamped to the frame."""
-    x0, y0, x1, y1 = box
-    cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
-    hw, hh = (x1 - x0) * (1 + pad) / 2, (y1 - y0) * (1 + pad) / 2
-    return max(0.0, cx - hw), max(0.0, cy - hh), min(1.0, cx + hw), min(1.0, cy + hh)
 
 
 class CameraShiftCheck(_Step[bool]):

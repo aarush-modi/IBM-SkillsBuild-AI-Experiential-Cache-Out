@@ -24,7 +24,6 @@ PATTERN_TEST = 4
 class HandInfo:
     bbox: BBox
     grasp: bool          # fingertips curled toward the palm
-    near_keyboard: bool  # inside the calibrated work zone
 
 
 @dataclass(frozen=True)

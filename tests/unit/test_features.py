@@ -143,11 +143,9 @@ def test_hand_bbox_is_clamped() -> None:
     assert (x1, y1) == (1.0, 1.0) and x0 < x1 and y0 < y1
 
 
-def test_near_keyboard_needs_a_work_zone() -> None:
-    h = hand(curled=False, centre=(0.5, 0.8))
-    assert not F.hand_info(h, GRASP, None).near_keyboard
-    assert F.hand_info(h, GRASP, (0.3, 0.7, 0.7, 0.95)).near_keyboard
-    assert not F.hand_info(h, GRASP, (0.0, 0.0, 0.3, 0.3)).near_keyboard
+def test_hand_info_grasp_flag() -> None:
+    assert F.hand_info(hand(curled=True), GRASP).grasp
+    assert not F.hand_info(hand(curled=False), GRASP).grasp
 
 
 # --- build_features --------------------------------------------------------------------------
