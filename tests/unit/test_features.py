@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+from dataclasses import replace
 
 import numpy as np
 import pytest
@@ -97,6 +98,7 @@ def test_level_shoulders() -> None:
     # Nose 0.25 of frame height above the shoulders = 0.1875 frame widths, / 0.3 width.
     assert m.nose_to_shoulder_y == pytest.approx(0.25 * ASPECT / 0.3)
     assert m.visibility == pytest.approx(0.98)
+    assert m.mid == pytest.approx((0.5, 0.6 * ASPECT))
 
 
 def test_shoulder_angle_sign_ignores_left_right_labels() -> None:
@@ -141,11 +143,9 @@ def test_hand_bbox_is_clamped() -> None:
     assert (x1, y1) == (1.0, 1.0) and x0 < x1 and y0 < y1
 
 
-def test_near_keyboard_needs_a_work_zone() -> None:
-    h = hand(curled=False, centre=(0.5, 0.8))
-    assert not F.hand_info(h, GRASP, None).near_keyboard
-    assert F.hand_info(h, GRASP, (0.3, 0.7, 0.7, 0.95)).near_keyboard
-    assert not F.hand_info(h, GRASP, (0.0, 0.0, 0.3, 0.3)).near_keyboard
+def test_hand_info_grasp_flag() -> None:
+    assert F.hand_info(hand(curled=True), GRASP).grasp
+    assert not F.hand_info(hand(curled=False), GRASP).grasp
 
 
 # --- build_features --------------------------------------------------------------------------
@@ -183,7 +183,7 @@ def test_pose_without_face_has_no_head_angles() -> None:
 def _f(t: float, yaw: float | None) -> F.FrameFeatures:
     return F.FrameFeatures(
         t=t, person_present=yaw is not None, shoulder_visibility=None, head_yaw=yaw, head_pitch=None,
-        head_roll=None, shoulder_width=None, shoulder_angle=None, nose_to_shoulder_y=None,
+        head_roll=None, shoulder_width=None, shoulder_angle=None, shoulder_mid=None, nose_to_shoulder_y=None,
         face_width=None, hands=[], objects=[],
     )
 
@@ -206,3 +206,12 @@ def test_smoother_keeps_non_numeric_fields() -> None:
     f = _f(3.0, 5.0)
     out = F.FeatureSmoother.from_settings(DEFAULTS).update(f)
     assert out.t == 3.0 and out.person_present and out.hands is f.hands
+
+
+def test_shoulder_mid_is_smoothed_per_coordinate_and_resets() -> None:
+    s = F.FeatureSmoother(alpha=0.5)
+    base = _f(0, 0.0)
+    assert s.update(replace(base, shoulder_mid=(0.4, 0.2))).shoulder_mid == (0.4, 0.2)
+    assert s.update(replace(base, shoulder_mid=(0.6, 0.4))).shoulder_mid == pytest.approx((0.5, 0.3))
+    assert s.update(replace(base, shoulder_mid=None)).shoulder_mid is None
+    assert s.update(replace(base, shoulder_mid=(0.1, 0.1))).shoulder_mid == (0.1, 0.1)

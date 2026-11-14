@@ -31,7 +31,7 @@ def _fmt(v: float | None, unit: str = "") -> str:
 
 
 def feature_lines(f: FrameFeatures) -> list[str]:
-    grasp = ",".join(("grasp" if h.grasp else "open") + ("/kb" if h.near_keyboard else "") for h in f.hands)
+    grasp = ",".join("grasp" if h.grasp else "open" for h in f.hands)
     return [
         f"present {f.person_present}  shoulder vis {_fmt(f.shoulder_visibility)}",
         f"yaw {_fmt(f.head_yaw, 'd')}  pitch {_fmt(f.head_pitch, 'd')}  roll {_fmt(f.head_roll, 'd')}",
@@ -41,11 +41,27 @@ def feature_lines(f: FrameFeatures) -> list[str]:
     ]
 
 
+FONT = cv2.FONT_HERSHEY_SIMPLEX
+FONT_SCALE = 0.5
+LINE_H = 20
+PAD = 8
+
+
 def put_lines(img: npt.NDArray[np.uint8], lines: list[str]) -> None:
+    """Text on a translucent dark panel in the top-left corner, so it reads on any background."""
+    if not lines:
+        return
+    # OpenCV's Hershey fonts are ASCII only: "°" would draw as "??".
+    lines = [t.replace("°", "d").encode("ascii", "replace").decode() for t in lines]
+    width = max(cv2.getTextSize(t, FONT, FONT_SCALE, 1)[0][0] for t in lines)
+    x0, y0 = 6, 6
+    x1 = min(img.shape[1], x0 + width + 2 * PAD)
+    y1 = min(img.shape[0], y0 + LINE_H * len(lines) + PAD)
+    panel = img[y0:y1, x0:x1]
+    panel[:] = (panel * 0.45).astype(np.uint8)  # darken in place, about 55% black
     for n, text in enumerate(lines):
-        y = 30 + 22 * n
-        cv2.putText(img, text, (10, y), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 0, 0), 3, cv2.LINE_AA)
-        cv2.putText(img, text, (10, y), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 255, 0), 1, cv2.LINE_AA)
+        y = y0 + PAD + 10 + LINE_H * n
+        cv2.putText(img, text, (x0 + PAD, y), FONT, FONT_SCALE, (235, 235, 235), 1, cv2.LINE_AA)
 
 
 def main() -> int:

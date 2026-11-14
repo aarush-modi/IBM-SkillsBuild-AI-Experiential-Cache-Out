@@ -53,8 +53,8 @@ DEFAULTS: dict[str, Any] = {
         "away_shoulder_vis": 0.5,
     },
     "calibration": {
-        "upright_s": 10, "window_s": 3, "work_zone_s": 3,
-        "work_zone_pad": 0.3, "recalibrate_shift": 0.15,
+        "upright_s": 10, "window_s": 3, "recalibrate_shift": 0.15,
+        "min_valid_ratio": 0.8, "recalibrate_check_s": 3,
     },
     "posture": {
         "slouch_pct": 15, "lean_pct": 20, "neck_pitch_deg": 20,
