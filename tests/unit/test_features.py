@@ -224,3 +224,13 @@ def test_face_bbox_surrounds_face_points() -> None:
     f = F.build_features(RawLandmarks(pose=pose(), face=face), [], t=0, aspect=ASPECT, grasp_curl_ratio=GRASP)
     assert f.face_bbox == pytest.approx((0.4, 0.2, 0.6, 0.45))
     assert F.build_features(RawLandmarks(pose=pose()), [], t=0, aspect=ASPECT, grasp_curl_ratio=GRASP).face_bbox is None
+
+
+def test_face_width_ignores_head_turn() -> None:
+    # Cheek points of a face 0.2 wide, turned 40° about the vertical axis: the on-image
+    # width shrinks but the depth difference grows, so the 3D width stays the same.
+    a = math.radians(40)
+    face = np.zeros((478, 3))
+    face[F.FACE_LEFT_CHEEK] = (0.5 - 0.1 * math.cos(a), 0.4, -0.1 * math.sin(a))
+    face[F.FACE_RIGHT_CHEEK] = (0.5 + 0.1 * math.cos(a), 0.4, 0.1 * math.sin(a))
+    assert F.face_width(face, ASPECT) == pytest.approx(0.2)

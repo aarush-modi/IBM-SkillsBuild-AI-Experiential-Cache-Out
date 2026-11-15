@@ -199,7 +199,10 @@ def test_calibration_round_trips_through_json() -> None:
     assert C.Calibration.from_dict(json.loads(json.dumps(skipped.to_dict()))) == skipped
 
 
-def test_old_calibration_with_work_zone_still_loads() -> None:
+def test_older_calibrations_must_be_redone() -> None:
     d = C.Calibration(baseline=baseline(), window_yaw=None).to_dict()
-    d["work_zone"] = [0.2, 0.6, 0.8, 0.9]
-    assert C.Calibration.from_dict(d).window_yaw is None
+    assert d["version"] == C.CALIBRATION_VERSION
+    old = {k: v for k, v in d.items() if k != "version"}  # saved before versioning
+    old["work_zone"] = [0.2, 0.6, 0.8, 0.9]
+    with pytest.raises(C.OutdatedCalibration):
+        C.Calibration.from_dict(old)

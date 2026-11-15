@@ -18,7 +18,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import cv2  # noqa: E402
 
 from app.contracts import FrameFeatures  # noqa: E402
-from app.logic.calibration import Calibration  # noqa: E402
+from app.logic.calibration import Calibration, OutdatedCalibration  # noqa: E402
 from app.logic.detectors import DetectorState, Detectors, RawSignals  # noqa: E402
 from app.storage import settings as settings_mod  # noqa: E402
 from app.storage.db import Database  # noqa: E402
@@ -63,7 +63,11 @@ def main() -> int:
     if saved is None:
         print("No saved calibration. Run: python scripts/calibrate_check.py --save")
         return 1
-    cal = Calibration.from_dict(saved)
+    try:
+        cal = Calibration.from_dict(saved)
+    except OutdatedCalibration:
+        print("Your saved calibration is from an older version. Run: python scripts/calibrate_check.py --save")
+        return 1
     detectors = Detectors(s, cal)
 
     print("Loading models...")

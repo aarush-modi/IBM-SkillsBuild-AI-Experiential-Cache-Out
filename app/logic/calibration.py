@@ -33,6 +33,15 @@ WINDOW_TOO_CLOSE_HINT = " Turn your whole head toward the window, not just your 
 WINDOW_FACE_LOST = "The camera lost your face. Turn a little less so it can still see you, or skip this step."
 
 
+# Bump when a stored baseline value changes meaning, so old calibrations are redone.
+# 2: face width is measured in 3D.
+CALIBRATION_VERSION = 2
+
+
+class OutdatedCalibration(ValueError):
+    """The saved calibration was made by an older version and must be redone."""
+
+
 @dataclass(frozen=True)
 class Baseline:
     head_yaw: float
@@ -52,13 +61,18 @@ class Calibration:
 
     def to_dict(self) -> dict[str, Any]:
         """The calibration table's values_json content."""
-        return asdict(self)
+        return {"version": CALIBRATION_VERSION, **asdict(self)}
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> Calibration:
+        """Raises OutdatedCalibration for a calibration from an older version."""
+        if d.get("version") != CALIBRATION_VERSION:
+            raise OutdatedCalibration(
+                f"Calibration version {d.get('version', 1)} is out of date "
+                f"(now {CALIBRATION_VERSION}); please recalibrate."
+            )
         b = dict(d["baseline"])
         b["shoulder_mid"] = tuple(b["shoulder_mid"])
-        # Older rows may also hold a "work_zone"; it is no longer used and is ignored.
         return cls(baseline=Baseline(**b), window_yaw=d.get("window_yaw"))
 
 

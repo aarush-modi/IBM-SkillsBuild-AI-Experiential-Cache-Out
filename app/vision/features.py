@@ -104,7 +104,14 @@ def shoulder_metrics(pose: FloatArray, aspect: float) -> ShoulderMetrics | None:
 
 
 def face_width(face: FloatArray, aspect: float) -> float:
-    pts = _to_width_units(face, aspect)
+    """Cheek-to-cheek distance in 3D, in frame-width units.
+
+    FaceLandmarker's z uses roughly the same scale as x, so including it makes the width
+    nearly independent of head turn: turning the head shortens the on-image width but
+    lengthens the depth difference. Only moving toward or away from the camera changes it,
+    which is what the leaning-in metric needs.
+    """
+    pts = np.column_stack([_to_width_units(face, aspect), face[:, 2]])
     return float(np.linalg.norm(pts[FACE_RIGHT_CHEEK] - pts[FACE_LEFT_CHEEK]))
 
 

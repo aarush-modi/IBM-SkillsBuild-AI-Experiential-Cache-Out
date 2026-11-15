@@ -178,7 +178,11 @@ def main() -> int:
 
     db = Database()
     saved = db.latest_calibration()
-    existing = C.Calibration.from_dict(saved) if saved else None
+    try:
+        existing = C.Calibration.from_dict(saved) if saved else None
+    except C.OutdatedCalibration:
+        existing = None  # older version: skip the camera-moved check; this run replaces it
+        print("Saved calibration is from an older version; this run replaces it (use --save).")
     print("Loading models...")
     pipeline = VisionPipeline.from_settings(s)
     wizard = Wizard(s, existing)

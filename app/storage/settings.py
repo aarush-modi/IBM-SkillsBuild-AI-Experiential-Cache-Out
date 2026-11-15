@@ -61,7 +61,7 @@ DEFAULTS: dict[str, Any] = {
     "posture": {
         "slouch_pct": 15, "lean_pct": 20, "neck_pitch_deg": 20,
         "tilt_roll_deg": 10, "shoulder_angle_deg": 7,
-        "penalty_weight": 20, "bad_score": 70, "bad_window_s": 30, "bad_ratio": 0.9,
+        "penalty_weight": 60, "dead_zone": 0.5, "bad_score": 70, "bad_window_s": 30, "bad_ratio": 0.9,
         "sample_interval_s": 10,
     },
     "alerts": {"sink_timeout_s": 2},
