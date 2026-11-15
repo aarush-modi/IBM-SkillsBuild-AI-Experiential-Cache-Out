@@ -9,7 +9,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from app.contracts import PATTERN_POSTURE, Alert, FrameFeatures
-from app.logic.calibration import Calibration
+from app.logic.calibration import NO_SHOULDERS, Calibration, CameraShiftCheck
 from app.logic.detectors import DetectorState, Detectors
 from app.logic.events import EventBook, EventRecord
 from app.logic.posture import PostureSample, PostureTracker, PostureUpdate
@@ -24,6 +24,8 @@ class SessionUpdate:
     alerts: list[Alert] = field(default_factory=list)
     events: list[EventRecord] = field(default_factory=list)
     sample: PostureSample | None = None
+    camera_hint: str | None = None     # "Move back or tilt the camera down..." (DESIGN §5)
+    camera_moved: bool | None = None   # set on the frame the start-of-session check finishes
 
 
 class SessionLogic:
@@ -36,6 +38,10 @@ class SessionLogic:
         self._posture_key: int | None = None
         self._posture_label: str | None = None
         self.last_t = 0.0
+        self._shift: CameraShiftCheck | None = CameraShiftCheck(settings, calibration.baseline)
+        self._hint_after_s: float = settings["vision"]["shoulders_missing_warn_s"]
+        self._min_shoulder_vis: float = settings["detectors"]["away_shoulder_vis"]
+        self._shoulders_missing_since: float | None = None
 
     @property
     def paused(self) -> bool:
@@ -49,6 +55,8 @@ class SessionLogic:
         if self.paused:  # paused before or by this frame (auto-pause after long absence)
             events += self._end_posture_event(f.t)
             return SessionUpdate(ds, self._idle_posture(f.t), fu, list(fu.alerts), events)
+        hint = self._camera_hint(f)
+        moved = self._check_shift(f)
 
         pu = self.posture.update(f, ds, self.focus.distraction_alert_active)
         alerts = list(fu.alerts)
@@ -66,7 +74,7 @@ class SessionLogic:
             self._posture_label = pu.worst_issue
         else:
             events += self._end_posture_event(f.t)
-        return SessionUpdate(ds, pu, fu, alerts, events, pu.sample)
+        return SessionUpdate(ds, pu, fu, alerts, events, pu.sample, hint, moved)
 
     # --- user actions -------------------------------------------------------------------
 
@@ -89,6 +97,30 @@ class SessionLogic:
         return self._end_posture_event(self.last_t) + self.focus.end(self.last_t)
 
     # --- helpers --------------------------------------------------------------------------
+
+    def _camera_hint(self, f: FrameFeatures) -> str | None:
+        """The user is in view but their shoulders aren't, for shoulders_missing_warn_s."""
+        missing = f.person_present and (
+            f.shoulder_visibility is None or f.shoulder_visibility < self._min_shoulder_vis
+        )
+        if not missing:
+            self._shoulders_missing_since = None
+            return None
+        if self._shoulders_missing_since is None:
+            self._shoulders_missing_since = f.t
+        return NO_SHOULDERS if f.t - self._shoulders_missing_since >= self._hint_after_s else None
+
+    def _check_shift(self, f: FrameFeatures) -> bool | None:
+        """Runs CameraShiftCheck over the first frames; returns its answer once, then None.
+        An inconclusive check (user not in view) says nothing."""
+        if self._shift is None:
+            return None
+        self._shift.add(f)
+        if not self._shift.done():
+            return None
+        result = self._shift.result()
+        self._shift = None
+        return result.value if result.passed else None
 
     def _end_posture_event(self, t: float) -> list[EventRecord]:
         if self._posture_key is None:

@@ -14,7 +14,8 @@ from pathlib import Path
 from types import TracebackType
 from typing import Any
 
-from app.storage.settings import app_data_dir
+from app.storage import settings as settings_mod
+from app.storage.settings import app_data_dir, make_private
 
 DB_NAME = "focusband.sqlite"
 
@@ -56,6 +57,22 @@ def default_path() -> Path:
     return app_data_dir() / DB_NAME
 
 
+def delete_all_data(folder: Path | None = None) -> list[Path]:
+    """Delete my data (DESIGN §2): remove the database and settings.json from the app data
+    folder. Close every Database first. Returns the files removed. Calibration is in the
+    database, so it goes too; the model files are not user data and stay."""
+    folder = folder or app_data_dir()
+    settings_name = settings_mod.default_path().name
+    removed = []
+    for name in (DB_NAME, f"{DB_NAME}-journal", f"{DB_NAME}-wal", f"{DB_NAME}-shm",
+                 settings_name, f"{settings_name}.tmp"):
+        p = folder / name
+        if p.exists():
+            p.unlink()
+            removed.append(p)
+    return removed
+
+
 def now_iso() -> str:
     """Local time with UTC offset, as the schema requires."""
     return datetime.now().astimezone().isoformat(timespec="seconds")
@@ -65,7 +82,9 @@ class Database:
     def __init__(self, path: Path | None = None) -> None:
         self.path = path or default_path()
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        make_private(self.path.parent)
         self._conn = sqlite3.connect(self.path)
+        make_private(self.path)
         self._conn.execute("PRAGMA foreign_keys = ON")
         self._conn.executescript(SCHEMA)
 
@@ -142,6 +161,17 @@ class Database:
         self._conn.row_factory = sqlite3.Row
         try:
             row = self._conn.execute("SELECT * FROM sessions WHERE id = ?", (session_id,)).fetchone()
+            return dict(row) if row else None
+        finally:
+            self._conn.row_factory = None
+
+    def latest_session(self) -> dict[str, Any] | None:
+        """The newest finished session, for the home page."""
+        self._conn.row_factory = sqlite3.Row
+        try:
+            row = self._conn.execute(
+                "SELECT * FROM sessions WHERE ended_at IS NOT NULL ORDER BY id DESC LIMIT 1"
+            ).fetchone()
             return dict(row) if row else None
         finally:
             self._conn.row_factory = None
