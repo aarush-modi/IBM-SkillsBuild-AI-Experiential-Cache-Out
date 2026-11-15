@@ -188,7 +188,7 @@ Alongside each `FrameFeatures`, the vision thread sends the UI a `PreviewFrame` 
 
 ## 6. Distraction detection
 
-Each detector turns smoothed features into one yes or no per frame, which is then smoothed over 2 s (section 5, step 7); the 1-minute timer in section 8 decides whether to alert. All four are judged only against the user's saved calibration, so a session needs one. That timer filters most short, harmless moments (a sip of water, a glance at a notification) without extra rules. All angles are measured against the user's calibrated baseline, and all numbers below are starting defaults to tune in testing; they live in the `detectors` block of `settings.json`.
+Each detector turns smoothed features into one yes or no per frame, which is then smoothed over 2 s (section 5, step 7); the 1-minute timer in section 8 decides whether to alert. All four are judged only against the user's saved calibration, so a session needs one. That timer filters most short, harmless moments (a sip of water, a glance at a notification) without extra rules. All head angles are measured relative to the user's calibrated head pose (section 7, `logic/head_pose.py`), so an angled camera doesn't skew them, and all numbers below are starting defaults to tune in testing; they live in the `detectors` block of `settings.json`.
 
 | Detector | Signals used | Fires when | Known false triggers and handling |
 | --- | --- | --- | --- |
@@ -208,9 +208,9 @@ Posture is judged as change from the user's own calibrated upright posture, not 
 **Calibration (about 15 s, in the wizard and from Settings)**
 
 1. **Upright baseline, 10 s [`calibration.upright_s`]:** "Sit tall, shoulders back, look at your screen." Store the median of every posture metric, of head yaw and pitch, and of the shoulder midpoint. A frame counts only if a pose and a face are found and shoulder visibility is at least [`detectors.away_shoulder_vis`].
-2. **Window direction, 3 s [`calibration.window_s`], optional:** "Turn your head toward your window and hold it." The 3 s start only once the head has turned more than [`detectors.look_yaw_deg`] from the screen, so the user can read the instruction first. Store the median head yaw. It fails if that yaw is within [`detectors.look_yaw_deg`] of the screen baseline, because the window could then never be told apart from the screen; the retry message shows the measured angle, and the user can skip the step.
+2. **Window direction, 3 s [`calibration.window_s`], optional:** "Turn your head toward your window and hold it." The 3 s start only once the head has turned more than [`detectors.look_yaw_deg`] from the screen, so the user can read the instruction first. Store the median head yaw relative to the upright baseline. It fails if that yaw is within [`detectors.look_yaw_deg`] of the screen baseline, because the window could then never be told apart from the screen; the retry message shows the measured angle, and the user can skip the step.
 
-Each step passes when at least 80% of its frames [`calibration.min_valid_ratio`] count; otherwise the wizard shows a retry with the reason (for example "Move back or tilt the camera down so both shoulders are in view"). The result is saved as one row in the `calibration` table; the newest row is the one in use. Each row records a calibration version; when an update changes what a stored value means (version 2: face width measured in 3D), older rows are refused and the user is asked to recalibrate.
+Each step passes when at least 80% of its frames [`calibration.min_valid_ratio`] count; otherwise the wizard shows a retry with the reason (for example "Move back or tilt the camera down so both shoulders are in view"). The result is saved as one row in the `calibration` table; the newest row is the one in use. Each row records a calibration version; when an update changes what a stored value means (version 2: face width measured in 3D; version 3: window yaw relative to the baseline head pose), older rows are refused and the user is asked to recalibrate.
 
 At session start, the app watches the first 3 s [`calibration.recalibrate_check_s`]. If the median shoulder midpoint has moved more than 15% of frame width [`calibration.recalibrate_shift`] from the stored baseline, it suggests recalibrating, because the camera has probably moved.
 
@@ -224,7 +224,7 @@ At session start, the app watches the first 3 s [`calibration.recalibrate_check_
 | Head tilt | Head roll, relative to the calibrated head pose | More than 10° away from baseline [`tilt_roll_deg`] | "Level your head." |
 | Uneven shoulders | Angle of the line through both shoulders | More than 7° away from baseline [`shoulder_angle_deg`] | "Even out your shoulders. Leaning on one elbow?" |
 
-Head pitch and roll are measured in the head's own calibrated frame (`logic/head_pose.py`): the rotation since calibration is rebuilt from yaw, pitch and roll and decomposed again, rather than subtracting each angle. With a camera above or beside the screen, subtracting angles turns an ordinary head turn into apparent tilt or nodding; the relative rotation does not.
+Head yaw, pitch and roll are measured in the head's own calibrated frame (`logic/head_pose.py`), here and by the looking-away and phone detectors in section 6: the rotation since calibration is rebuilt from yaw, pitch and roll and decomposed again, rather than subtracting each angle. With a camera above or beside the screen, subtracting angles turns an ordinary head turn into apparent tilt or nodding; the relative rotation does not.
 
 **Score and alerts**
 

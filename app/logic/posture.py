@@ -17,9 +17,8 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 from app.contracts import FrameFeatures
-from app.logic.calibration import Baseline
+from app.logic.calibration import Baseline, relative_head
 from app.logic.detectors import DetectorState
-from app.logic.head_pose import relative_angles
 
 Issue = Literal["slouching", "leaning_in", "neck_down", "head_tilt", "uneven_shoulders"]
 ISSUES: tuple[Issue, ...] = ("slouching", "leaning_in", "neck_down", "head_tilt", "uneven_shoulders")
@@ -101,17 +100,13 @@ class PostureTracker:
     def deviations(self, f: FrameFeatures) -> dict[Issue, float] | None:
         """How far each metric is from baseline in its harmful direction (same units as
         its threshold), or None if a metric can't be measured this frame."""
-        if (
-            f.nose_to_shoulder_y is None or f.face_width is None or f.head_yaw is None
-            or f.head_pitch is None or f.head_roll is None or f.shoulder_angle is None
-        ):
-            return None
         b = self.baseline
         # Head pitch and roll in the calibrated head's own frame, so an angled camera
         # doesn't turn an ordinary head turn into "neck down" or "tilt".
-        _, pitch, roll = relative_angles(
-            (b.head_yaw, b.head_pitch, b.head_roll), (f.head_yaw, f.head_pitch, f.head_roll)
-        )
+        rel = relative_head(b, f)
+        if rel is None or f.nose_to_shoulder_y is None or f.face_width is None or f.shoulder_angle is None:
+            return None
+        _, pitch, roll = rel
         return {
             "slouching": 100 * (b.nose_to_shoulder_y - f.nose_to_shoulder_y) / b.nose_to_shoulder_y,
             "leaning_in": 100 * (f.face_width - b.face_width) / b.face_width,

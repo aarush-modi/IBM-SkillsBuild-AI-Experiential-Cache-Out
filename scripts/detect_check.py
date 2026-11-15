@@ -18,7 +18,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import cv2  # noqa: E402
 
 from app.contracts import FrameFeatures  # noqa: E402
-from app.logic.calibration import Calibration, OutdatedCalibration  # noqa: E402
+from app.logic.calibration import Calibration, OutdatedCalibration, relative_head  # noqa: E402
 from app.logic.detectors import DetectorState, Detectors, RawSignals  # noqa: E402
 from app.storage import settings as settings_mod  # noqa: E402
 from app.storage.db import Database  # noqa: E402
@@ -35,9 +35,9 @@ def _mark(raw: bool, on: bool) -> str:
 
 
 def detector_lines(f: FrameFeatures, raw: RawSignals, state: DetectorState, cal: Calibration, away_s: float) -> list[str]:
-    b = cal.baseline
-    yaw = "-" if f.head_yaw is None else f"{f.head_yaw - b.head_yaw:+.0f}d"
-    pitch = "-" if f.head_pitch is None else f"{f.head_pitch - b.head_pitch:+.0f}d"
+    rel = relative_head(cal.baseline, f)
+    yaw = "-" if rel is None else f"{rel[0]:+.0f}d"
+    pitch = "-" if rel is None else f"{rel[1]:+.0f}d"
     window = "window " + ("yes" if state.window else "no") if cal.window_yaw is not None else "window not calibrated"
     return [
         f"Distraction: {state.label or 'none (focused)'}",
