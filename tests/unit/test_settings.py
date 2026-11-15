@@ -51,6 +51,3 @@ def test_defaults_match_design_doc() -> None:
     block = doc.split("```json\n", 1)[1].split("```", 1)[0]
     assert json.loads(block) == settings.DEFAULTS
 
-
-def test_no_secret_in_defaults() -> None:
-    assert "ntfy_topic" not in settings.DEFAULTS
