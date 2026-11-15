@@ -4,13 +4,13 @@ Last updated Oct 12, 2026
 
 ## 1. Overview
 
-FocusBand (working name) is a Python desktop app for Windows and macOS. It watches the user through their webcam during a study or work session, detects distraction and poor posture entirely on-device, and alerts them after 1 minute of sustained distraction — on their Apple Watch, or with a desktop notification. The team builds it with IBM Bob as the AI development platform; Bob is a dev tool here, not part of the running app.
+FocusBand (working name) is a Python desktop app for Windows and macOS. It watches the user through their webcam during a study or work session, detects distraction and poor posture entirely on-device, and alerts them after 1 minute of sustained distraction with a short ping and a desktop notification on the same computer. The team builds it with IBM Bob as the AI development platform; Bob is a dev tool here, not part of the running app.
 
 **Goals for the 2-week build**
 
 - Detect four distractions: phone use, looking away (including out the window), handling desk objects, and being away from the desk.
-- Score posture against a personal calibrated baseline and coach the user with buzzes, on-screen tips, a live skeleton overlay and an end-of-session report.
-- Deliver each alert to the best available device: a paired Apple Watch, or a desktop notification when no watch is paired.
+- Score posture against a personal calibrated baseline and coach the user with alert pings, on-screen tips, a live skeleton overlay and an end-of-session report.
+- Deliver each alert on the computer: a short ping whose sound tells the alert type apart, plus a desktop notification.
 - Present the custom BLE band as a designed concept: its protocol is specified (section 9) and a stub sink shows where it plugs in, but it does not need to work.
 - Keep all video on the user's computer.
 
@@ -19,16 +19,15 @@ FocusBand (working name) is a Python desktop app for Windows and macOS. It watch
 - Supervisor, employer or parent monitoring; the user is the only person who sees their data.
 - A working band. The hardware team designs and presents it, but there is no firmware and the desktop app never connects to it.
 - Medical or ergonomic diagnosis; posture tips are general guidance.
-- A phone app, beyond what the watch route needs.
+- Phone or smartwatch apps, or any alert delivery off the computer.
 
 **Priorities**
 
 | Priority | Scope | Why this tier |
 | --- | --- | --- |
-| P0, must ship | Webcam pipeline, four distraction detectors, posture scoring, calibration, session timer, live overlay, on-screen tips, desktop notifications | The core demo works with no wrist device at all |
+| P0, must ship | Webcam pipeline, four distraction detectors, posture scoring, calibration, session timer, live overlay, on-screen tips, desktop notifications with alert pings | The complete demo runs on one computer |
 | P1, should ship | End-of-session report, stats history dashboard, band stub sink | The report and dashboard reuse stored events; the band stub is small and shows the band design |
-| P2, after the freeze | Apple Watch alerts via ntfy — **required for the final demo** | The desktop publishes to a private ntfy.sh topic and the iPhone ntfy app mirrors it to the watch; no accounts, no cost, no watch code |
-| Stretch | Custom Apple Watch app with FocusBand vibration patterns; Wear OS via the ntfy Android app | Only after the ntfy route works |
+| Stretch | Desk-object YOLO fine-tune on the team's own ornaments (section 6) | Only after P0 and P1 work |
 
 ## 2. Users and privacy
 
@@ -36,33 +35,28 @@ One person runs the app on themselves, and only they see the results. Because th
 
 - **No video is stored.** Frames are processed in memory and dropped. The release build has no code path that writes frames to disk. A developer-only debug recorder exists behind the `FOCUSBAND_DEV_RECORDER` build flag and is off in release.
 - **What is stored:** session times, distraction events (type, start, end), posture scores and calibration values, in a local SQLite file in the user's app data folder.
-- **What leaves the computer:** only when a watch is paired, a small alert message (type, label, pattern, timestamp; no images, no names) is published to the user's private topic on the public ntfy.sh server. The topic is a long random name that acts as the secret; anyone who knows it can read the alerts, so it is stored in the OS keychain and shown only on the pairing screen.
+- **Nothing leaves the computer.** Alerts are a ping and a desktop notification on the same machine, and the app makes no network requests while it runs. The only downloads are the model files, fetched once by the setup script.
 - **The camera is only on during a session.** The session screen shows a clear "camera on" indicator and a pause button. Pausing or ending a session releases the camera.
 - **First-run consent screen** explains what the camera analyses, what is stored and how to delete it. Settings include **Delete all my data**.
 - **Test footage:** clips recorded of team members for tuning are recorded with their consent, kept off shared drives, and deleted after the project.
 
 ### Threats and mitigations
 
-FocusBand has no accounts, no server of its own and no cloud AI APIs, so the risks come down to two things: the ntfy topic, and the files on the user's laptop. Every item below is free to do.
+FocusBand has no accounts, no server and no cloud APIs, and sends nothing off the computer, so the risks come down to the files on the user's laptop and the third-party code it runs. Every item below is free to do.
 
 | Threat | Likelihood | Mitigation | Where / when |
 | --- | --- | --- | --- |
-| Someone learns the ntfy topic and reads alerts | Low | Topic from secrets.token_urlsafe(24) (about 190 bits). Stored only in the OS keychain via keyring. Never logged, never in settings.json or the database, and stripped from error messages. QR code shown only on the pairing screen | alerts/ntfy.py, pairing screen (P2) |
-| A leaked topic stays usable forever | Low | Re-pair watch button makes a new topic and QR code; the old topic is forgotten | Pairing screen (P2) |
-| Alert content reveals personal details | Low | Messages carry only kind, label, pattern and timestamp, as a short title and body such as "Phone — 1 min" (section 9). No session details, names, images or landmarks | alerts/ntfy.py (P2) |
-| No working keyring on the system | Low | Refuse to pair and explain why; never fall back to storing the topic in a file | alerts/ntfy.py (P2) |
+| Alert content seen by someone nearby | Low | Notifications carry only a short title and a generic line such as "Phone in hand for a while" (section 9). No session details, names, images or landmarks. Users can hide FocusBand previews on the lock screen in system settings | alerts/messages.py (done) |
 | Another user on the same computer reads the app data | Low | App data folder 0700 and files 0600 on macOS; on Windows, the per-user %APPDATA% folder | storage/settings.py, storage/db.py |
 | Laptop stolen or disk copied | Low | The database holds no images, only times, labels and scores. The consent screen recommends FileVault or BitLocker. No app-level database encryption, because SQLCipher adds a native dependency and key handling for little gain | Welcome and consent screen (P0) |
-| User wants their data gone | — | Delete my data removes the database, settings and keychain entry. Optional automatic deletion of sessions older than N days [`delete_sessions_after_days`], off by default | Welcome screen (P0), Settings |
+| User wants their data gone | — | Delete my data removes the database and settings. Optional automatic deletion of sessions older than N days [`delete_sessions_after_days`], off by default | Welcome screen (P0), Settings |
 | A swapped or tampered model file runs code (.pt uses pickle) | Low | Model URLs pinned to fixed versions, with size and SHA-256 checked before use | scripts/download_models.py (done) |
 | Third-party libraries send telemetry | Medium | Ultralytics analytics off (YOLO_OFFLINE=1, event queue disabled), guarded by tests | vision/objects.py (done) |
-| Frames, landmarks or the topic leak into logs or files | Low | No frame writes in app code. Acceptance check: after a session, the app data folder has no image or video files and no copy of the topic | Section 12 acceptance criteria |
-
-**Accepted risk:** ntfy.sh is a third-party public server, so anyone holding the topic can read its messages. End-to-end encryption isn't possible with the stock iPhone ntfy app, because it shows message text as-is. The topic's randomness and the minimal messages are the protection. If that ever becomes a concern, self-host ntfy (only ntfy_server changes) or move decryption into the custom watch app (stretch).
+| Frames or landmarks leak into logs or files, or data leaves the computer | Low | No frame writes in app code, and no network requests at run time. Acceptance checks: after a session, the app data folder has no image or video files, and the app made no network connections | Section 12 acceptance criteria |
 
 ## 3. Requirements
 
-Seventeen functional requirements; P0 items alone make a complete demo.
+Sixteen functional requirements; P0 items alone make a complete demo.
 
 | ID | Requirement | Priority |
 | --- | --- | --- |
@@ -74,30 +68,29 @@ Seventeen functional requirements; P0 items alone make a complete demo.
 | FR-06 | Detect the user away from the desk | P0 |
 | FR-07 | Alert after 60 s of continuous distraction; repeat every 2 min while it continues | P0 |
 | FR-08 | Compute a posture score every second and show an on-screen tip naming the worst issue | P0 |
-| FR-09 | Buzz after sustained bad posture, with a different pattern from distraction | P0 |
+| FR-09 | Alert after sustained bad posture, with a different ping from distraction | P0 |
 | FR-10 | Live camera preview with a skeleton overlay the user can toggle | P0 |
-| FR-11 | Desktop notification when no watch is paired | P0 |
-| FR-12 | Settings for thresholds, alert devices, camera choice and overlay | P0 |
+| FR-11 | Desktop notification for every alert | P0 |
+| FR-12 | Settings for thresholds, alert sound, camera choice and overlay | P0 |
 | FR-13 | Band: BLE contract documented and a stub `AlertSink` in the dispatcher chain (not functional) | P1 |
 | FR-14 | End-of-session report: focus time, distractions by type, posture score, top posture issues | P1 |
 | FR-15 | Stats history dashboard across days | P1 |
-| FR-16 | Custom Apple Watch app plays FocusBand vibration patterns; Wear OS receives alerts via the ntfy Android app | Stretch |
-| FR-17 | Apple Watch receives alerts through ntfy, mirrored from the iPhone ntfy app (**demo-required**) | P2 |
+| FR-16 | Each alert plays a short ping on the computer, with a distinct sound per alert type | P0 |
 
 **Non-functional targets**
 
 | Target | Value |
 | --- | --- |
 | Processing rate | 15 frames per second or more on a laptop CPU from 2020 or later, no GPU required |
-| Alert latency after the threshold is crossed | Under 1 s for desktop; under 5 s through ntfy to the Apple Watch |
+| Alert latency after the threshold is crossed | Under 1 s to the ping and the desktop notification |
 | False alerts | No more than 1 per 30 minutes of genuine focused work |
-| Offline use | Everything except watch delivery works with no internet |
-| Cost | Nothing: no paid services, no trials, no developer accounts beyond a free Apple ID |
+| Offline use | Everything works with no internet once the models are downloaded |
+| Cost | Nothing: no paid services, no trials, no developer accounts |
 | Platforms | Windows 10/11 and macOS 13 or later on Apple Silicon |
 
 ## 4. Architecture and stack
 
-One Python process runs everything that touches video. The only part outside it is the public ntfy.sh server and the phone and watch that subscribe to it (P2). The band appears in the diagram as a design-only stub.
+One Python process runs everything, and nothing leaves the computer. The band appears in the diagram as a design-only stub.
 
 ```text
                  Webcam
@@ -114,9 +107,9 @@ One Python process runs everything that touches video. The only part outside it 
 |                              |                     |          |
 |                              v                     v          |
 |                  State machine  ------->  Alert dispatcher ---+-x-> Custom band (stub, never sends)
-|                              |            (band stub, watch,  |---> ntfy.sh (P2) -> iPhone ntfy app -> Apple Watch
-|                              v             then desktop)      |                     (Wear OS: ntfy Android app, stretch)
-|                  SQLite storage                               |---> Desktop notification (P0)
+|                              |            (band stub, then    |
+|                              v             desktop)           |---> Ping + desktop notification (P0)
+|                  SQLite storage                               |
 |                  (events, scores; no video)                   |
 |                              |                                |
 |                              v                                |
@@ -125,9 +118,9 @@ One Python process runs everything that touches video. The only part outside it 
 +---------------------------------------------------------------+
 ```
 
-Frames flow from webcam to features; only the alert dispatcher sends anything out, and it sends a short message, never an image.
+Frames flow from webcam to features; the alert dispatcher turns alerts into a ping and a desktop notification on the same computer, never an image.
 
-The desktop app runs three threads so the UI never freezes: a **vision thread** (capture, models, features), a **logic thread** (rules, state machine, posture tracker, storage) and the **Qt UI thread**. They pass immutable dataclasses through queues. Alert sending runs on an asyncio loop in the logic thread, because the ntfy HTTP calls (and Bluetooth, if the band is ever built) are asynchronous.
+The desktop app runs three threads so the UI never freezes: a **vision thread** (capture, models, features), a **logic thread** (rules, state machine, posture tracker, storage) and the **Qt UI thread**. They pass immutable dataclasses through queues. Alert sending runs on an asyncio loop beside the logic thread (`alerts/runner.py`), because `desktop-notifier` (and Bluetooth, if the band is ever built) is asynchronous; a slow notification never delays a frame.
 
 | Layer | Choice | Notes |
 | --- | --- | --- |
@@ -137,11 +130,10 @@ The desktop app runs three threads so the UI never freezes: a **vision thread** 
 | Objects | Ultralytics YOLO26n, pretrained on COCO (includes cell phone, keyboard, mouse, laptop, book, cup) | Licensed AGPL-3.0, fine for a school project; a commercial product needs an Ultralytics licence |
 | UI | PySide6 (Qt) with pyqtgraph for charts | Qt also provides the tray or menu-bar icon |
 | Desktop notifications | `desktop-notifier` package | Windows toasts and macOS Notification Center from one API |
+| Alert pings | Short WAV files in the repo, played with `afplay` on macOS and the standard-library `winsound` on Windows | No audio dependency |
 | Bluetooth LE | Not used; the band sink is a stub | `bleak` is the intended library if the band is ever built |
-| HTTP to ntfy | `httpx` (async) | P2 |
 | Type checking | mypy, strict | Paths set in `pyproject.toml`: contracts, logic, alerts, storage |
 | Storage | SQLite (Python's built-in `sqlite3`) plus a JSON settings file | Local only |
-| Watch delivery (P2) | Public ntfy.sh server, no account | Free; the iPhone ntfy app mirrors notifications to the paired Apple Watch. Section 9 |
 | Packaging | PyInstaller, one build per OS | The macOS build needs a camera usage description in its Info.plist |
 | Development | IBM Bob for scaffolding, tests and refactors; GitHub for code | See section 13 |
 
@@ -277,7 +269,7 @@ Every state change is written to the `events` table with a timestamp, so the rep
 
 ## 9. Alert delivery
 
-Every alert goes to exactly one place: a paired Apple Watch, otherwise a desktop notification. The band sink sits first in the chain to show where the band would plug in, but it is a stub whose `available()` always returns False. Every sink implements the same interface, so the rules never know which device is in use.
+Every alert goes to exactly one sink. In practice that is the desktop sink: a short ping plus a desktop notification on the same computer. The band sink sits first in the chain to show where the band would plug in, but it is a stub whose `available()` always returns False. Every sink implements the same interface, so the rules never know which device is in use.
 
 ```python
 class AlertSink(Protocol):
@@ -289,22 +281,22 @@ class AlertSink(Protocol):
 class Alert:
     kind: Literal["distraction", "posture", "test"]
     label: str        # e.g. "phone", "window", "slouching"
-    pattern: int      # vibration pattern ID, table below
+    pattern: int      # alert pattern ID, table below
     created_at: float
 ```
 
-The dispatcher tries sinks in priority order (band stub → ntfy to the watch → desktop) and moves on if `send` fails or takes longer than 2 s [`alerts.sink_timeout_s`]. The desktop also always shows the alert as an in-app banner while the window is visible.
+The dispatcher tries sinks in priority order (band stub → desktop) and moves on if `send` fails or takes longer than 2 s [`alerts.sink_timeout_s`]. The desktop also always shows the alert as an in-app banner while the window is visible.
 
-**Vibration patterns** (on and off times in milliseconds; Apple Watch approximates them, and the band design and Wear OS app would play them exactly)
+**Desktop sink.** It plays the ping for the alert's pattern first [`alerts.ping`], then shows a silent desktop notification, so the two sounds never overlap. The ping doesn't need notification permission, so the user still hears an alert if notifications are blocked or in Do Not Disturb. On macOS the first session asks for notification permission once. Notification text is short and generic: a title ("FocusBand: distraction", "FocusBand: still distracted" when escalated, "FocusBand: posture") and one line, the posture tip for posture alerts (`alerts/messages.py`).
 
-| ID | Used for | Pattern |
-| --- | --- | --- |
-| 1 | Distraction | 400 on, 200 off, 400 on |
-| 2 | Posture | 150 on, 100 off, 150 on, 100 off, 150 on |
-| 3 | Escalated distraction | 800 on, 200 off, 800 on, 200 off, 800 on |
-| 4 | Test or paired | 100 on |
+**Alert patterns.** Each alert carries a pattern ID. The desktop plays it as a ping (WAVs made by `scripts/make_sounds.py`); the band design would play it as a vibration (on and off times in milliseconds).
 
-On the ntfy route the watch plays its default notification haptic; only the optional custom watch app plays these patterns.
+| ID | Used for | Ping on the computer | Band vibration (design) |
+| --- | --- | --- | --- |
+| 1 | Distraction | Two beeps at 880 Hz | 400 on, 200 off, 400 on |
+| 2 | Posture | One soft low tone at 440 Hz | 150 on, 100 off, 150 on, 100 off, 150 on |
+| 3 | Escalated distraction | Three fast beeps at 1320 Hz | 800 on, 200 off, 800 on, 200 off, 800 on |
+| 4 | Test | A rising chirp | 100 on |
 
 ### Custom band: Bluetooth LE protocol (design only, not implemented)
 
@@ -317,22 +309,6 @@ The band is presented as a design. This contract describes how it would work: th
 - **Intended desktop behaviour (if built):** `bleak` scans for the service UUID, connects, and stays connected for the session. On disconnect it retries every 10 s and falls through to the next sink meanwhile. Pairing happens in Settings: Scan, pick the band, receive pattern 4.
 - **Intended firmware (if built):** a small ESP32-C3 or nRF52840 board drives a coin vibration motor by PWM (`intensity` → duty cycle), plays `pattern_id` from the table above without blocking BLE, and reports battery each minute.
 
-### Watches: ntfy (P2)
-
-Watches pair with phones, not laptops, so alerts go laptop → ntfy.sh → phone → watch. This uses the free public [ntfy](https://ntfy.sh) server: no account, no card, no Apple Developer Program, and no server code of our own.
-
-1. **Pair:** in Settings, the desktop generates a random 32-character topic name, stores it in the OS keychain, and shows it as a QR code and as text. The user subscribes to that topic in the free ntfy app on their iPhone and allows ntfy notifications to mirror to the Apple Watch. The desktop then sends pattern 4 as a test.
-2. **Alert:** `NtfySink` POSTs one JSON message to `ntfy_server` with the topic, a short title and body (e.g. "Phone — 1 min"), priority high, and tags carrying `kind` and `pattern`. Nothing else is sent.
-3. **Forget watch:** deletes the topic from the keychain and clears `watch_paired`.
-
-| Watch | How the alert arrives | Vibration |
-| --- | --- | --- |
-| Apple Watch (demo-required) | iPhone ntfy app receives it and iOS mirrors the notification to the watch | Default notification haptic |
-| Apple Watch custom app (stretch) | Small Swift app installed from Xcode with a free Apple ID (reinstall every 7 days). While open during a session, it polls `GET <ntfy_server>/<topic>/json?poll=1&since=<last id>` every few seconds | Plays the pattern from the table above with `WKInterfaceDevice` haptics. Must stay in the foreground; free accounts cannot receive push |
-| Wear OS (stretch) | ntfy Android app on the phone or watch | Default notification vibration |
-
-**Trade-off:** ntfy.sh is a third-party server and anyone who knows the topic can read its messages, which is why the topic is long, random and kept in the keychain, and why messages carry only kind, label, pattern and timestamp. If that becomes a concern, ntfy can be self-hosted later without changing the desktop code beyond `ntfy_server`.
-
 ## 10. Desktop screens
 
 Six screens plus a tray or menu-bar icon cover the whole flow; the session screen is the one the demo lives on.
@@ -342,7 +318,7 @@ Six screens plus a tray or menu-bar icon cover the whole flow; the session scree
 | Welcome and consent | What the camera analyses, what is stored, camera permission request, link to Delete my data | P0 |
 | Calibration wizard | The two steps from section 7 with a live preview, a countdown and a pass or retry result per step | P0 |
 | Session | Live preview with skeleton overlay toggle, "camera on" indicator, timer, focus state chip, posture score, tip banner, Pause, Break, Snooze and End buttons | P0 |
-| Settings | Thresholds from section 8, camera choice, overlay default, alert devices (watch pairing QR code and topic, Send test alert, Forget watch; band shown as "coming soon") | P0 |
+| Settings | Thresholds from section 8, camera choice, overlay default, alert sound on or off, Send test alert, band shown as "coming soon" | P0 |
 | Session report | Focus time vs total time, distractions by type with counts and minutes, posture score over the session, the 3 most common posture issues with their tips | P1 |
 | Dashboard | Focus minutes per day, distractions per hour of work, average posture score, for the last 7 or 30 days | P1 |
 | Tray or menu-bar icon | Current state colour, Start or End session, Pause, Open window; keeps running when the window is closed | P0 |
@@ -367,7 +343,7 @@ CREATE TABLE events (
   label TEXT,                        -- phone, window, desk_object, slouching, ...
   started_at TEXT NOT NULL,
   ended_at TEXT,
-  alert_sink TEXT                    -- ntfy | desktop, for alert rows
+  alert_sink TEXT                    -- desktop (or band, if ever built), for alert rows
 );
 
 CREATE TABLE posture_samples (       -- one row per 10 s [posture.sample_interval_s], averaged
@@ -390,8 +366,6 @@ Settings live in `settings.json` next to the database. These defaults are the si
 {
   "camera_index": 0,
   "overlay": true,
-  "watch_paired": false,
-  "ntfy_server": "https://ntfy.sh",
 
   "distraction_threshold_s": {"phone": 60, "looking_away": 60, "desk_object": 60, "away": 60},
   "focus_reset_s": 5,
@@ -432,11 +406,9 @@ Settings live in `settings.json` next to the database. These defaults are the si
     "penalty_weight": 60, "dead_zone": 0.5, "bad_score": 70, "bad_window_s": 30, "bad_ratio": 0.9,
     "sample_interval_s": 10
   },
-  "alerts": {"sink_timeout_s": 2}
+  "alerts": {"sink_timeout_s": 2, "ping": true}
 }
 ```
-
-The ntfy topic is stored in the OS keychain (via the `keyring` package), not in plain JSON; the JSON keeps only a flag that a watch is paired and the server URL.
 
 `delete_sessions_after_days` is off (`null`) by default. When set to N, sessions that started more than N days ago are deleted at app start, together with their `events` and `posture_samples` rows. Calibration rows are kept. The Settings screen offers off, 7, 30 or 90 days.
 
@@ -451,12 +423,11 @@ focusband/
     contracts.py         # shared frozen dataclasses and AlertSink (stdlib only)
     vision/              # capture.py, landmarkers.py, objects.py, features.py
     logic/               # detectors.py, posture.py, state_machine.py, calibration.py
-    alerts/              # dispatcher.py, desktop.py, ntfy.py, ble_band.py (stub)
+    alerts/              # dispatcher.py, desktop.py, sounds.py (+ sounds/*.wav), messages.py, runner.py, ble_band.py (stub)
     storage/             # db.py, settings.py
     ui/                  # session.py, wizard.py, settings.py, report.py, dashboard.py
   models/                # .task and .pt files, downloaded by a setup script
   shared/ble_contract.json  # band design: UUIDs and pattern table (not used at runtime)
-  watch/applewatch/      # Swift custom watch app (stretch; built and installed from Xcode with a free Apple ID)
   tests/
     unit/                # rules and state machine with synthetic features
     clips/               # consented test videos, git-ignored
@@ -467,23 +438,23 @@ focusband/
 
 - **Unit tests (pytest):** every detector, the posture score, and every state-machine transition, fed with hand-built `FrameFeatures` sequences. Target: logic modules fully covered, and the suite runs in under 10 s.
 - **Replay evaluation:** each team member records consented 3-minute clips for each scenario (focused typing, reading notes, phone, window, fidget object, away, slouching, leaning in), in daylight and lamplight. Label the start and end of each behaviour in a CSV. `eval.py` replays the clips through the real pipeline and reports detection rate and false alerts per detector.
-- **Device tests:** on one Windows and one macOS laptop — camera permission, notifications, packaged build start-up, and an Apple Watch receiving a test alert through ntfy.
+- **Device tests:** on one Windows and one macOS laptop — camera permission, notification permission, the four pings audible and distinct, and packaged build start-up.
 - **Soak test:** a 60-minute genuine work session on each OS, checking CPU, memory growth and false alerts.
 
 **Acceptance criteria for the demo**
 
 - [ ] Each of the 4 distractions held for 60 s triggers an alert in at least 9 of 10 replay clips.
 - [ ] No more than 1 false alert in a 30-minute focused session.
-- [ ] Slouching and leaning in held for 2 minutes trigger a posture buzz and the correct tip.
+- [ ] Slouching and leaning in held for 2 minutes trigger a posture ping and the correct tip.
 - [ ] At least 15 fps on the slowest team laptop with the overlay on.
-- [ ] Alerts reach the desktop within 1 s when no watch is paired, and reach a paired Apple Watch within 5 s through ntfy.
+- [ ] The ping and desktop notification arrive within 1 s of the alert threshold.
 - [ ] The session report matches the events logged during the session.
 - [ ] A search of the app data folder after a session finds no image or video files.
-- [ ] No copy of the ntfy topic appears in the settings file, database or logs.
+- [ ] The app makes no network connections during a session.
 
 ## 13. Two-week plan, IBM Bob and risks
 
-The P0 demo works end to end on desktop notifications by day 5. The ntfy sink is built early (days 6–7), so the Apple Watch already gets alerts before the P0 and P1 freeze on day 10; days 10–12 go to the optional custom watch app. Developer A owns vision and logic; developer B owns the app shell, UI, storage and alerts. The three hardware teammates design and present the band concept and also record and label test clips.
+The P0 demo works end to end on desktop notifications and pings by day 5. Everything runs on the computer: there is no watch or phone delivery. Days 11 and 12 go to the optional desk-object fine-tune. Developer A owns vision and logic; developer B owns the app shell, UI, storage and alerts. The three hardware teammates design and present the band concept and also record and label test clips.
 
 | Who | Task | Days |
 | --- | --- | --- |
@@ -497,19 +468,18 @@ The P0 demo works end to end on desktop notifications by day 5. The ntfy sink is
 | Developer B | Qt shell, threads, storage | 1–2 |
 | Developer B | Session screen and notifications | 3–4 |
 | Developer B | Settings and calibration wizard | 5 |
-| Developer B | Band stub sink, ntfy sink, pairing screen with QR code | 6–7 |
+| Developer B | Band stub sink, desktop sink with pings, Send test alert | 6–7 |
 | Developer B | Report and dashboard | 8–9 |
-| Developer B | Custom Apple Watch app (stretch); Wear OS check with the ntfy Android app | 10–12 |
+| Developer B | Tray icon polish, Delete my data, consent screen | 10–12 |
 | Both developers | Packaging, fixes, demo prep | 13–14 |
 | Hardware team | Band concept: design, mock-up and presentation of how it would work | 1–7 |
 | Hardware team | Record and label test clips | 4–5 |
 
-Milestones: interfaces agreed (day 1), P0 demo on desktop (day 5), Apple Watch receives a live alert through ntfy (day 7), **P0 and P1 freeze (day 10)**, final demo (day 14). Days 11 and 12 hold stretch work (custom watch app, desk-object fine-tune), so a slip in the core plan eats into stretch work rather than the demo.
+Milestones: interfaces agreed (day 1), P0 demo on desktop (day 5), **P0 and P1 freeze (day 10)**, final demo (day 14). Days 11 and 12 hold stretch work (desk-object fine-tune), so a slip in the core plan eats into stretch work rather than the demo.
 
 **Handoffs that keep the two developers unblocked**
 
 - Day 1: agree on `FrameFeatures`, `Alert` and the `AlertSink` interface (sections 5 and 9) before writing code. B builds the UI against a fake feature stream; A tests rules without the UI.
-- Day 7: the ntfy topic is testable with `curl -d "test" ntfy.sh/<topic>`, so the watch route can be checked before the desktop sink is finished.
 - Days 4 and 5: hardware teammates record and label the replay clips (section 12).
 
 **Using IBM Bob**
@@ -528,9 +498,7 @@ Milestones: interfaces agreed (day 1), P0 demo on desktop (day 5), Apple Watch r
 | A bright window behind the user ruins face tracking | Medium | Warn when face confidence is low; recommend the camera faces away from windows |
 | Too slow on older laptops | Medium | The performance fallback order in section 5; profile on the slowest laptop by day 4 |
 | macOS camera permission or packaging problems | Medium | Test the packaged build by day 10; demo from source as a fallback |
-| ntfy.sh is down or rate-limits during the demo | Low | Desktop notification still fires (fallback sink); ntfy can be self-hosted on a laptop if needed |
-| Watch doesn't show mirrored notifications | Medium | Check the iPhone Watch app's notification mirroring for ntfy and that the watch isn't in Do Not Disturb; test by day 7 |
-| Custom watch app doesn't fit in the time | High | It is stretch; the ntfy route already meets the demo requirement |
+| Notifications blocked or in Do Not Disturb during the demo | Medium | The ping plays regardless of notification permission; check the macOS permission prompt was accepted before the demo |
 | False alerts annoy users | Medium | 1-minute threshold, 5 s focus reset, Snooze, and replay tuning on days 9 and 10 |
 
 ## Sources
@@ -539,4 +507,3 @@ Milestones: interfaces agreed (day 1), P0 demo on desktop (day 5), Apple Watch r
 - [MediaPipe PoseLandmarker Python API](https://developers.google.com/edge/api/mediapipe/python/mp/tasks/vision/PoseLandmarker)
 - [MediaPipe: Tasks API replaces the legacy Solutions API (MGT-python wiki)](https://github.com/fourMs/MGT-python/wiki/10-%E2%80%90-Pose-and-Motion-Capture)
 - [Ultralytics YOLO26 and licensing](https://docs.ultralytics.com/)
-- [ntfy push notification service](https://github.com/binwiederhier/ntfy/blob/9f052bdf8b8094adb05b39c55a7e783bf51d51e5/README.md)

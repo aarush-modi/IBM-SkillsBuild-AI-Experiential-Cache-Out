@@ -1,8 +1,7 @@
 """settings.json: defaults, loading and saving (DESIGN §11).
 
 DEFAULTS is the single source for every threshold and timing. Missing keys in the
-user's file are filled from DEFAULTS, so older files keep working. The ntfy topic is
-a secret and never belongs here; it lives in the OS keychain.
+user's file are filled from DEFAULTS, so older files keep working.
 """
 
 from __future__ import annotations
@@ -22,8 +21,6 @@ APP_NAME = "FocusBand"
 DEFAULTS: dict[str, Any] = {
     "camera_index": 0,
     "overlay": True,
-    "watch_paired": False,
-    "ntfy_server": "https://ntfy.sh",
 
     "distraction_threshold_s": {"phone": 60, "looking_away": 60, "desk_object": 60, "away": 60},
     "focus_reset_s": 5,
@@ -64,7 +61,7 @@ DEFAULTS: dict[str, Any] = {
         "penalty_weight": 60, "dead_zone": 0.5, "bad_score": 70, "bad_window_s": 30, "bad_ratio": 0.9,
         "sample_interval_s": 10,
     },
-    "alerts": {"sink_timeout_s": 2},
+    "alerts": {"sink_timeout_s": 2, "ping": True},
 }
 
 
