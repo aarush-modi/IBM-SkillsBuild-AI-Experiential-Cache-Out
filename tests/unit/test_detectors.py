@@ -10,6 +10,7 @@ import pytest
 from app.contracts import BBox, Detection, FrameFeatures, HandInfo
 from app.logic.calibration import Baseline, Calibration
 from app.logic.detectors import BoolSmoother, DetectorState, Detectors, box_gap, overlaps
+from app.logic.head_pose import _mul, to_angles, to_matrix
 from app.storage.settings import DEFAULTS
 
 FPS = 15
@@ -150,7 +151,8 @@ def test_looking_down_at_notes_is_not_looking_away() -> None:
 
 
 def test_window_label() -> None:
-    state = hold(detectors(window_yaw=60.0), 3, head_yaw=55.0)
+    # window_yaw is relative to the baseline head pose; a camera yaw of 55° is about 53° from baseline.
+    state = hold(detectors(window_yaw=55.0), 3, head_yaw=55.0)
     assert state.looking_away and state.window
     assert state.label == "window" and state.distraction_type == "looking_away"
 
@@ -243,3 +245,45 @@ def test_reset_forgets_history() -> None:
     det.reset()
     assert det.last_raw is None
     assert not det.update(feat(10.0)).looking_away
+
+
+# --- angled camera ---------------------------------------------------------------------------
+
+CAMERA = to_matrix((30, -20, 0))  # camera above and beside the screen
+
+
+def angled_detectors(window_yaw: float | None = None) -> Detectors:
+    yaw, pitch, roll = to_angles(CAMERA)
+    base = Baseline(
+        head_yaw=yaw, head_pitch=pitch, head_roll=roll, shoulder_width=0.3, shoulder_angle=0.0,
+        shoulder_mid=(0.5, 0.45), nose_to_shoulder_y=0.8, face_width=0.2,
+    )
+    return Detectors(settings(), Calibration(baseline=base, window_yaw=window_yaw))
+
+
+def head(turn: tuple[float, float, float]) -> dict[str, float]:
+    yaw, pitch, roll = to_angles(_mul(CAMERA, to_matrix(turn)))
+    return dict(head_yaw=yaw, head_pitch=pitch, head_roll=roll)
+
+
+def test_angled_camera_reading_across_screen_is_focused() -> None:
+    # A 20° head turn (under look_yaw_deg) with a little nod: still looking at the screen.
+    assert hold(angled_detectors(), 3, **head((20, -8, 0))).label is None
+
+
+def test_angled_camera_turn_away_is_looking_away() -> None:
+    assert hold(angled_detectors(), 3, **head((-35, 0, 0))).label == "looking_away"
+
+
+def test_angled_camera_looking_up() -> None:
+    assert hold(angled_detectors(), 3, **head((0, 25, 0))).looking_away
+
+
+def test_angled_camera_window() -> None:
+    assert hold(angled_detectors(window_yaw=45.0), 3, **head((50, 0, 0))).label == "window"
+
+
+def test_angled_camera_phone_while_looking_down() -> None:
+    phone = obj("cell phone", (0.05, 0.8, 0.12, 0.95))
+    assert hold(angled_detectors(), 3, objects=[phone], **head((0, -22, 0))).phone
+    assert not hold(angled_detectors(), 3, objects=[phone], **head((0, -10, 0))).phone

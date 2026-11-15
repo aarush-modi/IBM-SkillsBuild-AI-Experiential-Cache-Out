@@ -11,6 +11,7 @@ import pytest
 
 from app.contracts import FrameFeatures
 from app.logic import calibration as C
+from app.logic.head_pose import _mul, to_angles, to_matrix
 from app.storage.settings import DEFAULTS
 
 FPS = 15
@@ -126,7 +127,8 @@ def test_window_yaw_is_stored() -> None:
     step = C.WindowStep(settings(), baseline())
     run(step, 3, lambda i, t: feat(t, head_yaw=60.0))
     r = step.result()
-    assert r.passed and r.value == pytest.approx(60.0)
+    # Stored relative to the baseline head pose (baseline yaw 2°): about 58°.
+    assert r.passed and r.value == pytest.approx(58.0, abs=1)
 
 
 def test_window_waits_for_the_turn_before_timing() -> None:
@@ -139,7 +141,7 @@ def test_window_waits_for_the_turn_before_timing() -> None:
     for i in range(3 * 15 + 1):
         step.add(feat(200 + i / 15, head_yaw=b.head_yaw + 50))
     assert not step.waiting and step.done()
-    assert step.result().value == pytest.approx(b.head_yaw + 50)
+    assert step.result().value == pytest.approx(50, abs=1)
 
 
 def test_window_turning_back_too_soon_fails_with_measured_angle() -> None:
@@ -164,7 +166,7 @@ def test_window_to_the_other_side_also_counts() -> None:
     b = baseline()
     step = C.WindowStep(settings(), b)
     run(step, 3, lambda i, t: feat(t, head_yaw=b.head_yaw - 50))
-    assert step.result().value == pytest.approx(b.head_yaw - 50)
+    assert step.result().value == pytest.approx(-50, abs=1)
 
 
 # --- camera shift check ---------------------------------------------------------------------
@@ -191,6 +193,21 @@ def test_camera_check_inconclusive_when_user_absent() -> None:
 
 # --- Calibration ------------------------------------------------------------------------------
 
+def test_window_under_angled_camera_is_the_head_turn() -> None:
+    # Camera above and beside the screen; the user turns their head 40° toward the window.
+    camera = to_matrix((30, -20, 0))
+    yaw, pitch, roll = to_angles(camera)
+    s = settings()
+    up = C.UprightStep(s)
+    run(up, 10, lambda i, t: feat(t, head_yaw=yaw, head_pitch=pitch, head_roll=roll))
+    base = up.result().value
+    assert base is not None
+    turned = to_angles(_mul(camera, to_matrix((40, 0, 0))))
+    step = C.WindowStep(s, base)
+    run(step, 3, lambda i, t: feat(t, head_yaw=turned[0], head_pitch=turned[1], head_roll=turned[2]))
+    assert step.result().value == pytest.approx(40, abs=1e-6)
+
+
 def test_calibration_round_trips_through_json() -> None:
     cal = C.Calibration(baseline=baseline(), window_yaw=55.0)
     again = C.Calibration.from_dict(json.loads(json.dumps(cal.to_dict())))
@@ -199,7 +216,10 @@ def test_calibration_round_trips_through_json() -> None:
     assert C.Calibration.from_dict(json.loads(json.dumps(skipped.to_dict()))) == skipped
 
 
-def test_old_calibration_with_work_zone_still_loads() -> None:
+def test_older_calibrations_must_be_redone() -> None:
     d = C.Calibration(baseline=baseline(), window_yaw=None).to_dict()
-    d["work_zone"] = [0.2, 0.6, 0.8, 0.9]
-    assert C.Calibration.from_dict(d).window_yaw is None
+    assert d["version"] == C.CALIBRATION_VERSION
+    old = {k: v for k, v in d.items() if k != "version"}  # saved before versioning
+    old["work_zone"] = [0.2, 0.6, 0.8, 0.9]
+    with pytest.raises(C.OutdatedCalibration):
+        C.Calibration.from_dict(old)

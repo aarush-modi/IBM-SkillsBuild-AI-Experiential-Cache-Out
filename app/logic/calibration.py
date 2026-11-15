@@ -21,6 +21,7 @@ from statistics import median
 from typing import Any, Generic, TypeVar
 
 from app.contracts import FrameFeatures
+from app.logic.head_pose import Angles, relative_angles
 
 T = TypeVar("T")
 
@@ -31,6 +32,15 @@ NO_FACE = "Face the screen so the camera can see your face clearly."
 WINDOW_TOO_CLOSE = "Your head turned only {measured:.0f}° from the screen; it needs more than {needed:.0f}°."
 WINDOW_TOO_CLOSE_HINT = " Turn your whole head toward the window, not just your eyes, or skip this step."
 WINDOW_FACE_LOST = "The camera lost your face. Turn a little less so it can still see you, or skip this step."
+
+
+# Bump when a stored baseline value changes meaning, so old calibrations are redone.
+# 2: face width is measured in 3D. 3: window yaw is relative to the baseline head pose.
+CALIBRATION_VERSION = 3
+
+
+class OutdatedCalibration(ValueError):
+    """The saved calibration was made by an older version and must be redone."""
 
 
 @dataclass(frozen=True)
@@ -48,18 +58,34 @@ class Baseline:
 @dataclass(frozen=True)
 class Calibration:
     baseline: Baseline
-    window_yaw: float | None  # None when the window step was skipped
+    window_yaw: float | None  # relative to the baseline head pose; None when skipped
 
     def to_dict(self) -> dict[str, Any]:
         """The calibration table's values_json content."""
-        return asdict(self)
+        return {"version": CALIBRATION_VERSION, **asdict(self)}
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> Calibration:
+        """Raises OutdatedCalibration for a calibration from an older version."""
+        if d.get("version") != CALIBRATION_VERSION:
+            raise OutdatedCalibration(
+                f"Calibration version {d.get('version', 1)} is out of date "
+                f"(now {CALIBRATION_VERSION}); please recalibrate."
+            )
         b = dict(d["baseline"])
         b["shoulder_mid"] = tuple(b["shoulder_mid"])
-        # Older rows may also hold a "work_zone"; it is no longer used and is ignored.
         return cls(baseline=Baseline(**b), window_yaw=d.get("window_yaw"))
+
+
+def relative_head(baseline: Baseline, f: FrameFeatures) -> Angles | None:
+    """Head yaw, pitch and roll now, in the calibrated head's own frame (see head_pose.py),
+    or None when no face is found. Every head-angle judgement goes through this, so an
+    angled camera doesn't skew it."""
+    if f.head_yaw is None or f.head_pitch is None or f.head_roll is None:
+        return None
+    return relative_angles(
+        (baseline.head_yaw, baseline.head_pitch, baseline.head_roll), (f.head_yaw, f.head_pitch, f.head_roll)
+    )
 
 
 @dataclass(frozen=True)
@@ -169,30 +195,38 @@ class WindowStep(_Step[float]):
         c = settings["calibration"]
         super().__init__(c["window_s"], c["min_valid_ratio"])
         self.min_yaw_diff: float = settings["detectors"]["look_yaw_deg"]
-        self.baseline_yaw = baseline.head_yaw
-        self._yaws: list[float] = []
+        self.baseline = baseline
+        self._yaws: list[float] = []  # relative to the baseline head pose
 
     @property
     def waiting(self) -> bool:
         """True until the head has turned far enough for the step's clock to start."""
         return self._start is None
 
+    def turn(self, f: FrameFeatures) -> float | None:
+        """Head yaw relative to the baseline, or None with no face."""
+        rel = relative_head(self.baseline, f)
+        return None if rel is None else rel[0]
+
     def add(self, f: FrameFeatures) -> None:
-        if self.waiting and (f.head_yaw is None or abs(f.head_yaw - self.baseline_yaw) <= self.min_yaw_diff):
-            return
+        if self.waiting:
+            yaw = self.turn(f)
+            if yaw is None or abs(yaw) <= self.min_yaw_diff:
+                return
         super().add(f)
 
     def _collect(self, f: FrameFeatures) -> str | None:
         if not f.person_present:
             return NO_PERSON
-        if f.head_yaw is None:
+        yaw = self.turn(f)
+        if yaw is None:
             return WINDOW_FACE_LOST
-        self._yaws.append(f.head_yaw)
+        self._yaws.append(yaw)
         return None
 
     def _finish(self) -> StepResult[float]:
         yaw = median(self._yaws)
-        turn = abs(yaw - self.baseline_yaw)
+        turn = abs(yaw)
         if turn <= self.min_yaw_diff:
             msg = WINDOW_TOO_CLOSE.format(measured=turn, needed=self.min_yaw_diff) + WINDOW_TOO_CLOSE_HINT
             return StepResult(None, msg)

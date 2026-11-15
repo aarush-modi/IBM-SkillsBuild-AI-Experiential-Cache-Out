@@ -6,6 +6,8 @@ Drawing happens on an in-memory copy; nothing is written to disk.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
+
 import cv2
 import numpy as np
 import numpy.typing as npt
@@ -33,6 +35,23 @@ GREEN: Color = (80, 200, 80)
 AMBER: Color = (0, 170, 255)
 GREY: Color = (150, 150, 150)
 CYAN: Color = (220, 200, 0)
+
+_HEAD_LINES = ((NOSE, LEFT_EYE), (LEFT_EYE, LEFT_EAR), (NOSE, RIGHT_EYE), (RIGHT_EYE, RIGHT_EAR))
+_SHOULDER_LINE = ((LEFT_SHOULDER, RIGHT_SHOULDER),)
+
+# Which skeleton lines show each posture issue (names from app/logic/posture.py).
+ISSUE_LINES: dict[str, tuple[tuple[int, int], ...]] = {
+    "slouching": _HEAD_LINES + _SHOULDER_LINE,
+    "leaning_in": _HEAD_LINES,
+    "neck_down": _HEAD_LINES,
+    "head_tilt": _HEAD_LINES,
+    "uneven_shoulders": _SHOULDER_LINE,
+}
+
+
+def posture_line_colors(issues: Iterable[str]) -> dict[tuple[int, int], Color]:
+    """Amber for the lines of each posture issue past its threshold; the rest stay green."""
+    return {line: AMBER for issue in issues for line in ISSUE_LINES.get(issue, ())}
 
 
 def draw_overlay(

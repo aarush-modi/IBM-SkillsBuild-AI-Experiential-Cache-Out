@@ -52,10 +52,12 @@ def _pct(v: float | None, base: float) -> str:
 
 def live_lines(f: FrameFeatures, cal: C.Calibration) -> list[str]:
     b = cal.baseline
-    window = f"{cal.window_yaw - b.head_yaw:+.0f}d" if cal.window_yaw is not None else "skipped"
+    window = f"{cal.window_yaw:+.0f}d" if cal.window_yaw is not None else "skipped"
+    rel = C.relative_head(b, f)
+    head = "no face" if rel is None else f"yaw {rel[0]:+.1f}d  pitch {rel[1]:+.1f}d  roll {rel[2]:+.1f}d"
     return [
         "Calibrated. Change from baseline:",
-        f"yaw {_d(f.head_yaw, b.head_yaw)}  pitch {_d(f.head_pitch, b.head_pitch)}  roll {_d(f.head_roll, b.head_roll)}",
+        head,
         f"nose-shoulder gap {_pct(f.nose_to_shoulder_y, b.nose_to_shoulder_y)}  face width {_pct(f.face_width, b.face_width)}",
         f"shoulder angle {_d(f.shoulder_angle, b.shoulder_angle)}  window at {window}",
     ]
@@ -135,10 +137,10 @@ class Wizard:
     def turn_line(self) -> str:
         """Live head turn from the screen baseline, so a failing window step can be diagnosed."""
         needed = self.s["detectors"]["look_yaw_deg"]
-        yaw = self.last.head_yaw if self.last else None
-        if yaw is None or self.baseline is None:
+        rel = C.relative_head(self.baseline, self.last) if self.last and self.baseline else None
+        if rel is None:
             return f"Head turn now: no face found (needs over {needed:.0f}d)"
-        return f"Head turn now: {yaw - self.baseline.head_yaw:+.0f}d from screen (needs over {needed:.0f}d)"
+        return f"Head turn now: {rel[0]:+.0f}d from screen (needs over {needed:.0f}d)"
 
     def lines(self) -> list[str]:
         p = self.phase
@@ -178,7 +180,11 @@ def main() -> int:
 
     db = Database()
     saved = db.latest_calibration()
-    existing = C.Calibration.from_dict(saved) if saved else None
+    try:
+        existing = C.Calibration.from_dict(saved) if saved else None
+    except C.OutdatedCalibration:
+        existing = None  # older version: skip the camera-moved check; this run replaces it
+        print("Saved calibration is from an older version; this run replaces it (use --save).")
     print("Loading models...")
     pipeline = VisionPipeline.from_settings(s)
     wizard = Wizard(s, existing)

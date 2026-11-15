@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 from app.contracts import BBox, Detection, FrameFeatures, HandInfo
-from app.logic.calibration import Calibration
+from app.logic.calibration import Calibration, relative_head
 
 Label = Literal["phone", "desk_object", "window", "looking_away", "away"]
 DistractionType = Literal["phone", "desk_object", "looking_away", "away"]  # keys of distraction_threshold_s
@@ -154,7 +154,8 @@ class Detectors:
             return False
         if any(box_gap(p.bbox, h.bbox, self.aspect) <= self.phone_hand_dist for p in phones for h in f.hands):
             return True
-        return f.head_pitch is not None and self.baseline.head_pitch - f.head_pitch >= self.phone_pitch_down_deg
+        rel = relative_head(self.baseline, f)
+        return rel is not None and -rel[1] >= self.phone_pitch_down_deg
 
     def _hand_off_task(self, hand: HandInfo, f: FrameFeatures) -> bool:
         if not hand.grasp:
@@ -171,16 +172,14 @@ class Detectors:
 
     def _looking(self, f: FrameFeatures) -> tuple[bool, bool]:
         """(looking away, toward the window)."""
-        if f.head_yaw is None or f.head_pitch is None:
+        rel = relative_head(self.baseline, f)
+        if rel is None:
             return True, False  # body seen, face lost: head turned beyond the face tracker
-        b = self.baseline
-        away = (
-            abs(f.head_yaw - b.head_yaw) > self.look_yaw_deg
-            or f.head_pitch - b.head_pitch > self.look_pitch_up_deg
-        )
+        yaw, pitch, _ = rel  # relative to the calibrated head pose, so camera angle doesn't matter
+        away = abs(yaw) > self.look_yaw_deg or pitch > self.look_pitch_up_deg
         window = (
             away and self.window_yaw is not None
-            and abs(f.head_yaw - self.window_yaw) <= self.window_yaw_tol_deg
+            and abs(yaw - self.window_yaw) <= self.window_yaw_tol_deg
         )
         return away, window
 

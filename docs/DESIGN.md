@@ -188,7 +188,7 @@ Alongside each `FrameFeatures`, the vision thread sends the UI a `PreviewFrame` 
 
 ## 6. Distraction detection
 
-Each detector turns smoothed features into one yes or no per frame, which is then smoothed over 2 s (section 5, step 7); the 1-minute timer in section 8 decides whether to alert. All four are judged only against the user's saved calibration, so a session needs one. That timer filters most short, harmless moments (a sip of water, a glance at a notification) without extra rules. All angles are measured against the user's calibrated baseline, and all numbers below are starting defaults to tune in testing; they live in the `detectors` block of `settings.json`.
+Each detector turns smoothed features into one yes or no per frame, which is then smoothed over 2 s (section 5, step 7); the 1-minute timer in section 8 decides whether to alert. All four are judged only against the user's saved calibration, so a session needs one. That timer filters most short, harmless moments (a sip of water, a glance at a notification) without extra rules. All head angles are measured relative to the user's calibrated head pose (section 7, `logic/head_pose.py`), so an angled camera doesn't skew them, and all numbers below are starting defaults to tune in testing; they live in the `detectors` block of `settings.json`.
 
 | Detector | Signals used | Fires when | Known false triggers and handling |
 | --- | --- | --- | --- |
@@ -208,9 +208,9 @@ Posture is judged as change from the user's own calibrated upright posture, not 
 **Calibration (about 15 s, in the wizard and from Settings)**
 
 1. **Upright baseline, 10 s [`calibration.upright_s`]:** "Sit tall, shoulders back, look at your screen." Store the median of every posture metric, of head yaw and pitch, and of the shoulder midpoint. A frame counts only if a pose and a face are found and shoulder visibility is at least [`detectors.away_shoulder_vis`].
-2. **Window direction, 3 s [`calibration.window_s`], optional:** "Turn your head toward your window and hold it." The 3 s start only once the head has turned more than [`detectors.look_yaw_deg`] from the screen, so the user can read the instruction first. Store the median head yaw. It fails if that yaw is within [`detectors.look_yaw_deg`] of the screen baseline, because the window could then never be told apart from the screen; the retry message shows the measured angle, and the user can skip the step.
+2. **Window direction, 3 s [`calibration.window_s`], optional:** "Turn your head toward your window and hold it." The 3 s start only once the head has turned more than [`detectors.look_yaw_deg`] from the screen, so the user can read the instruction first. Store the median head yaw relative to the upright baseline. It fails if that yaw is within [`detectors.look_yaw_deg`] of the screen baseline, because the window could then never be told apart from the screen; the retry message shows the measured angle, and the user can skip the step.
 
-Each step passes when at least 80% of its frames [`calibration.min_valid_ratio`] count; otherwise the wizard shows a retry with the reason (for example "Move back or tilt the camera down so both shoulders are in view"). The result is saved as one row in the `calibration` table; the newest row is the one in use.
+Each step passes when at least 80% of its frames [`calibration.min_valid_ratio`] count; otherwise the wizard shows a retry with the reason (for example "Move back or tilt the camera down so both shoulders are in view"). The result is saved as one row in the `calibration` table; the newest row is the one in use. Each row records a calibration version; when an update changes what a stored value means (version 2: face width measured in 3D; version 3: window yaw relative to the baseline head pose), older rows are refused and the user is asked to recalibrate.
 
 At session start, the app watches the first 3 s [`calibration.recalibrate_check_s`]. If the median shoulder midpoint has moved more than 15% of frame width [`calibration.recalibrate_shift`] from the stored baseline, it suggests recalibrating, because the camera has probably moved.
 
@@ -219,17 +219,20 @@ At session start, the app watches the first 3 s [`calibration.recalibrate_check_
 | Issue | Computed from | Bad when (versus baseline) | On-screen tip |
 | --- | --- | --- | --- |
 | Slouching | Vertical gap from nose to shoulder midpoint, divided by shoulder width | Gap shrinks by more than 15% [`slouch_pct`] | "Sit up tall: you're sinking into your chair." |
-| Leaning in | Face width (proxy for distance to screen) | Grows by more than 20% [`lean_pct`] | "Lean back: you're getting close to the screen." |
-| Neck bent down | Head pitch | More than 20° further down [`neck_pitch_deg`] for most of the window | "Raise your chin, or raise your screen to eye level." |
-| Head tilt | Head roll | More than 10° away from baseline [`tilt_roll_deg`] | "Level your head." |
+| Leaning in | Face width, measured in 3D from the face landmarks so that turning the head doesn't change it (proxy for distance to screen) | Grows by more than 20% [`lean_pct`] | "Lean back: you're getting close to the screen." |
+| Neck bent down | Head pitch, relative to the calibrated head pose | More than 20° further down [`neck_pitch_deg`] for most of the window | "Raise your chin, or raise your screen to eye level." |
+| Head tilt | Head roll, relative to the calibrated head pose | More than 10° away from baseline [`tilt_roll_deg`] | "Level your head." |
 | Uneven shoulders | Angle of the line through both shoulders | More than 7° away from baseline [`shoulder_angle_deg`] | "Even out your shoulders. Leaning on one elbow?" |
+
+Head yaw, pitch and roll are measured in the head's own calibrated frame (`logic/head_pose.py`), here and by the looking-away and phone detectors in section 6: the rotation since calibration is rebuilt from yaw, pitch and roll and decomposed again, rather than subtracting each angle. With a camera above or beside the screen, subtracting angles turns an ordinary head turn into apparent tilt or nodding; the relative rotation does not.
 
 **Score and alerts**
 
-- Each second, each metric gives a penalty from 0 (at baseline) to 1 (at twice its threshold). Posture score = 100 − 20 [`posture.penalty_weight`] × the sum of penalties, clamped to 0–100.
-- Posture is **bad** when the score stays under 70 [`posture.bad_score`] for 90% [`posture.bad_ratio`] of a 30 s rolling window [`posture.bad_window_s`]. The on-screen tip names the metric with the largest penalty.
-- **Alert** when posture stays bad for 2 minutes [`posture_threshold_s`] (configurable, 1 to 10 min). After a posture alert, the next one waits at least 5 minutes [`posture_cooldown_s`], and posture alerts are held back while a distraction alert is active.
-- Posture is not scored while the user is away or looking away, because the landmarks are unreliable then.
+- Each second, each metric gives a penalty, averaged over that second's frames. It is 0 until the metric is half-way to its threshold [`posture.dead_zone`], so normal wobble costs nothing; it then rises to 0.5 at the threshold and to 1 at twice the threshold. Only the harmful direction counts: a bigger nose-to-shoulder gap or a smaller face is not penalised. Posture score = 100 − 60 [`posture.penalty_weight`] × the sum of penalties, clamped to 0–100. With 60, any single metric past its threshold (penalty over 0.5) scores under 70, so one issue on its own can make posture bad; so can two issues each more than halfway to their thresholds.
+- Posture is **bad** when the score stays under 70 [`posture.bad_score`] for 90% [`posture.bad_ratio`] of a 30 s rolling window [`posture.bad_window_s`]; seconds that were not scored count as not bad. The on-screen tip names the metric with the largest total penalty over that window.
+- **Alert** when posture stays bad for 2 minutes [`posture_threshold_s`] (configurable, 1 to 10 min). After a posture alert, the next one waits at least 5 minutes [`posture_cooldown_s`]; if posture is still bad then, it alerts again. Posture alerts are held back while a distraction alert is active and sent once it ends, if posture is still bad. Good posture at any point resets the 2-minute clock.
+- Posture is not scored while the user is away or looking away (including the seconds before the away detector fires), because the landmarks are unreliable then.
+- Every 10 s [`posture.sample_interval_s`] the tracker emits one `posture_samples` row: the mean score of the scored seconds and the issue with the largest total penalty.
 - The live overlay draws the pose skeleton, colours each joint line green or amber by its metric, and shows the score in a corner.
 
 ## 8. Session states and alert timing
@@ -421,7 +424,7 @@ Settings live in `settings.json` next to the database. These defaults are the si
   "posture": {
     "slouch_pct": 15, "lean_pct": 20, "neck_pitch_deg": 20,
     "tilt_roll_deg": 10, "shoulder_angle_deg": 7,
-    "penalty_weight": 20, "bad_score": 70, "bad_window_s": 30, "bad_ratio": 0.9,
+    "penalty_weight": 60, "dead_zone": 0.5, "bad_score": 70, "bad_window_s": 30, "bad_ratio": 0.9,
     "sample_interval_s": 10
   },
   "alerts": {"sink_timeout_s": 2}
