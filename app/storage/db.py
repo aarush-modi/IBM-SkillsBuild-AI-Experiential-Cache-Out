@@ -90,6 +90,96 @@ class Database:
         values: dict[str, Any] = json.loads(row[0])
         return values
 
+    # --- sessions, events and posture samples ----------------------------------------
+
+    def start_session(self, started_at: str) -> int:
+        with self._conn:
+            cur = self._conn.execute("INSERT INTO sessions (started_at) VALUES (?)", (started_at,))
+        assert cur.lastrowid is not None
+        return cur.lastrowid
+
+    def end_session(
+        self, session_id: int, ended_at: str, focus_seconds: int, avg_posture_score: float | None
+    ) -> None:
+        with self._conn:
+            self._conn.execute(
+                "UPDATE sessions SET ended_at = ?, focus_seconds = ?, avg_posture_score = ? WHERE id = ?",
+                (ended_at, focus_seconds, avg_posture_score, session_id),
+            )
+
+    def add_event(
+        self, session_id: int, kind: str, label: str | None, started_at: str,
+        ended_at: str | None = None, alert_sink: str | None = None,
+    ) -> int:
+        with self._conn:
+            cur = self._conn.execute(
+                "INSERT INTO events (session_id, kind, label, started_at, ended_at, alert_sink) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (session_id, kind, label, started_at, ended_at, alert_sink),
+            )
+        assert cur.lastrowid is not None
+        return cur.lastrowid
+
+    def end_event(self, event_id: int, ended_at: str, label: str | None) -> None:
+        with self._conn:
+            self._conn.execute(
+                "UPDATE events SET ended_at = ?, label = COALESCE(?, label) WHERE id = ?",
+                (ended_at, label, event_id),
+            )
+
+    def set_alert_sink(self, event_id: int, sink: str) -> None:
+        with self._conn:
+            self._conn.execute("UPDATE events SET alert_sink = ? WHERE id = ?", (sink, event_id))
+
+    def add_posture_sample(self, session_id: int, t: int, score: float | None, worst_issue: str | None) -> None:
+        with self._conn:
+            self._conn.execute(
+                "INSERT INTO posture_samples (session_id, t, score, worst_issue) VALUES (?, ?, ?, ?)",
+                (session_id, t, score, worst_issue),
+            )
+
+    def session(self, session_id: int) -> dict[str, Any] | None:
+        self._conn.row_factory = sqlite3.Row
+        try:
+            row = self._conn.execute("SELECT * FROM sessions WHERE id = ?", (session_id,)).fetchone()
+            return dict(row) if row else None
+        finally:
+            self._conn.row_factory = None
+
+    def events(self, session_id: int) -> list[dict[str, Any]]:
+        self._conn.row_factory = sqlite3.Row
+        try:
+            rows = self._conn.execute("SELECT * FROM events WHERE session_id = ? ORDER BY id", (session_id,))
+            return [dict(r) for r in rows]
+        finally:
+            self._conn.row_factory = None
+
+    def posture_samples(self, session_id: int) -> list[dict[str, Any]]:
+        self._conn.row_factory = sqlite3.Row
+        try:
+            rows = self._conn.execute(
+                "SELECT t, score, worst_issue FROM posture_samples WHERE session_id = ? ORDER BY t", (session_id,)
+            )
+            return [dict(r) for r in rows]
+        finally:
+            self._conn.row_factory = None
+
+    def delete_sessions_before(self, cutoff: datetime) -> int:
+        """Delete sessions that started before `cutoff`, with their events and posture
+        samples (DESIGN §11, delete_sessions_after_days). Calibration is kept. Returns the
+        number of sessions deleted."""
+        cutoff = cutoff.astimezone()  # aware, so it compares with any stored UTC offset
+        old = [
+            sid for sid, started in self._conn.execute("SELECT id, started_at FROM sessions").fetchall()
+            if datetime.fromisoformat(started) < cutoff
+        ]
+        with self._conn:
+            for sid in old:
+                self._conn.execute("DELETE FROM events WHERE session_id = ?", (sid,))
+                self._conn.execute("DELETE FROM posture_samples WHERE session_id = ?", (sid,))
+                self._conn.execute("DELETE FROM sessions WHERE id = ?", (sid,))
+        return len(old)
+
     # --- lifecycle --------------------------------------------------------------------
 
     def close(self) -> None:
