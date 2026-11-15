@@ -184,7 +184,7 @@ def _f(t: float, yaw: float | None) -> F.FrameFeatures:
     return F.FrameFeatures(
         t=t, person_present=yaw is not None, shoulder_visibility=None, head_yaw=yaw, head_pitch=None,
         head_roll=None, shoulder_width=None, shoulder_angle=None, shoulder_mid=None, nose_to_shoulder_y=None,
-        face_width=None, hands=[], objects=[],
+        face_width=None, face_bbox=None, hands=[], objects=[],
     )
 
 
@@ -215,3 +215,12 @@ def test_shoulder_mid_is_smoothed_per_coordinate_and_resets() -> None:
     assert s.update(replace(base, shoulder_mid=(0.6, 0.4))).shoulder_mid == pytest.approx((0.5, 0.3))
     assert s.update(replace(base, shoulder_mid=None)).shoulder_mid is None
     assert s.update(replace(base, shoulder_mid=(0.1, 0.1))).shoulder_mid == (0.1, 0.1)
+
+
+def test_face_bbox_surrounds_face_points() -> None:
+    face = np.zeros((478, 3))
+    face[:, 0] = np.linspace(0.4, 0.6, 478)
+    face[:, 1] = np.linspace(0.2, 0.45, 478)
+    f = F.build_features(RawLandmarks(pose=pose(), face=face), [], t=0, aspect=ASPECT, grasp_curl_ratio=GRASP)
+    assert f.face_bbox == pytest.approx((0.4, 0.2, 0.6, 0.45))
+    assert F.build_features(RawLandmarks(pose=pose()), [], t=0, aspect=ASPECT, grasp_curl_ratio=GRASP).face_bbox is None

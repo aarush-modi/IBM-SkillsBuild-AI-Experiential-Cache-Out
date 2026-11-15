@@ -46,6 +46,7 @@ class FrameFeatures:
     shoulder_mid: tuple[float, float] | None  # shoulder midpoint (x, y), frame-width units
     nose_to_shoulder_y: float | None  # vertical gap, divided by shoulder width
     face_width: float | None      # proxy for distance to screen
+    face_bbox: BBox | None        # box around the face landmarks, 0 to 1 on each axis
     hands: list[HandInfo]
     objects: list[Detection]
 

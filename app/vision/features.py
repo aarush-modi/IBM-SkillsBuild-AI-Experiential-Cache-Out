@@ -108,11 +108,16 @@ def face_width(face: FloatArray, aspect: float) -> float:
     return float(np.linalg.norm(pts[FACE_RIGHT_CHEEK] - pts[FACE_LEFT_CHEEK]))
 
 
-def hand_bbox(hand: RawHand) -> BBox:
-    xy = np.clip(hand.image[:, :2], 0.0, 1.0)
+def points_bbox(points: FloatArray) -> BBox:
+    """Box around normalized landmark points, clamped to the frame."""
+    xy = np.clip(points[:, :2], 0.0, 1.0)
     x0, y0 = xy.min(axis=0)
     x1, y1 = xy.max(axis=0)
     return float(x0), float(y0), float(x1), float(y1)
+
+
+def hand_bbox(hand: RawHand) -> BBox:
+    return points_bbox(hand.image)
 
 
 def curl_ratio(world: FloatArray) -> float:
@@ -158,6 +163,7 @@ def build_features(
         shoulder_mid=sm.mid if sm else None,
         nose_to_shoulder_y=sm.nose_to_shoulder_y if sm else None,
         face_width=face_width(raw.face, aspect) if raw.face is not None else None,
+        face_bbox=points_bbox(raw.face) if raw.face is not None else None,
         hands=[hand_info(h, grasp_curl_ratio) for h in raw.hands],
         objects=list(objects),
     )

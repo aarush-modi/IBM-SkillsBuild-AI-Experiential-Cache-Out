@@ -30,6 +30,7 @@ NO_SHOULDERS = "Move back or tilt the camera down so both shoulders are in view.
 NO_FACE = "Face the screen so the camera can see your face clearly."
 WINDOW_TOO_CLOSE = "Your head turned only {measured:.0f}° from the screen; it needs more than {needed:.0f}°."
 WINDOW_TOO_CLOSE_HINT = " Turn your whole head toward the window, not just your eyes, or skip this step."
+WINDOW_FACE_LOST = "The camera lost your face. Turn a little less so it can still see you, or skip this step."
 
 
 @dataclass(frozen=True)
@@ -160,6 +161,10 @@ class UprightStep(_Step[Baseline]):
 
 
 class WindowStep(_Step[float]):
+    """Waits until the head has turned more than look_yaw_deg from the screen, then times
+    window_s from there. So the user can read the instruction first, and frames of them
+    still facing the screen never count against the window direction."""
+
     def __init__(self, settings: dict[str, Any], baseline: Baseline) -> None:
         c = settings["calibration"]
         super().__init__(c["window_s"], c["min_valid_ratio"])
@@ -167,11 +172,21 @@ class WindowStep(_Step[float]):
         self.baseline_yaw = baseline.head_yaw
         self._yaws: list[float] = []
 
+    @property
+    def waiting(self) -> bool:
+        """True until the head has turned far enough for the step's clock to start."""
+        return self._start is None
+
+    def add(self, f: FrameFeatures) -> None:
+        if self.waiting and (f.head_yaw is None or abs(f.head_yaw - self.baseline_yaw) <= self.min_yaw_diff):
+            return
+        super().add(f)
+
     def _collect(self, f: FrameFeatures) -> str | None:
         if not f.person_present:
             return NO_PERSON
         if f.head_yaw is None:
-            return NO_FACE
+            return WINDOW_FACE_LOST
         self._yaws.append(f.head_yaw)
         return None
 

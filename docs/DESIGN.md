@@ -175,6 +175,7 @@ class FrameFeatures:
     shoulder_mid: tuple[float, float] | None  # shoulder midpoint (x, y), frame-width units
     nose_to_shoulder_y: float | None  # vertical gap, divided by shoulder width
     face_width: float | None      # proxy for distance to screen
+    face_bbox: BBox | None        # box around the face landmarks, 0 to 1 on each axis
     hands: list[HandInfo]         # bbox, grasp flag
     objects: list[Detection]      # class, confidence, bbox
 ```
@@ -187,16 +188,16 @@ Alongside each `FrameFeatures`, the vision thread sends the UI a `PreviewFrame` 
 
 ## 6. Distraction detection
 
-Each detector turns smoothed features into one yes or no per frame; the 1-minute timer in section 8 decides whether to alert. That timer filters most short, harmless moments (a sip of water, a glance at a notification) without extra rules. All angles are measured against the user's calibrated baseline, and all numbers below are starting defaults to tune in testing; they live in the `detectors` block of `settings.json`.
+Each detector turns smoothed features into one yes or no per frame, which is then smoothed over 2 s (section 5, step 7); the 1-minute timer in section 8 decides whether to alert. All four are judged only against the user's saved calibration, so a session needs one. That timer filters most short, harmless moments (a sip of water, a glance at a notification) without extra rules. All angles are measured against the user's calibrated baseline, and all numbers below are starting defaults to tune in testing; they live in the `detectors` block of `settings.json`.
 
 | Detector | Signals used | Fires when | Known false triggers and handling |
 | --- | --- | --- | --- |
-| Phone | YOLO `cell phone`, hand boxes, head pitch | A phone with confidence of at least 0.45 [`phone_conf`] overlaps or sits within 0.1 frame-widths [`phone_hand_dist`] of a hand, **or** a phone is visible on the desk while head pitch is 20° or more below baseline [`phone_pitch_down_deg`] | Phone used for two-factor codes or a call → 1-minute timer plus a "Snooze 10 min" button |
-| Looking away | Head yaw and pitch | Yaw differs from baseline by more than 25° [`look_yaw_deg`], or pitch is more than 20° above baseline [`look_pitch_up_deg`]. Labelled **window** when yaw is within 15° [`window_yaw_tol_deg`] of the calibrated window direction | Looking down at notes is not counted: pitch down with hands on the desk or a `book` detected counts as working |
-| Desk objects | Hand boxes and grasp flags, YOLO objects | A visible hand is grasping (typing hands are below the camera's view, so a hand in frame has been lifted), **and** it overlaps an object not on the work list (keyboard, mouse, laptop, book) or no object YOLO recognizes | Weakest detector: COCO has no class for most ornaments. Writing with a pen looks similar; the book check reduces this. Upgrade path below |
+| Phone | YOLO `cell phone`, hand boxes, head pitch | A phone with confidence of at least 0.45 [`phone_conf`] overlaps or sits within 0.1 frame-widths [`phone_hand_dist`] of a hand (the gap between the two boxes, with height scaled by the capture aspect ratio), **or** a phone is visible on the desk while head pitch is 20° or more below baseline [`phone_pitch_down_deg`] | Phone used for two-factor codes or a call → 1-minute timer plus a "Snooze 10 min" button |
+| Looking away | Head yaw and pitch | Yaw differs from baseline by more than 25° [`look_yaw_deg`], or pitch is more than 20° above baseline [`look_pitch_up_deg`]. Also fires when a body is seen with its shoulders visible but no face is found, because the head has turned further than the face tracker follows. Labelled **window** when yaw is within 15° [`window_yaw_tol_deg`] of the calibrated window direction (never when the face is lost). Not judged while the away signal is on | Looking down at notes is not counted: pitch down with hands on the desk or a `book` detected counts as working |
+| Desk objects | Hand boxes and grasp flags, YOLO objects, face box | A visible hand is grasping (typing hands are below the camera's view, so a hand in frame has been lifted), does not overlap the face box, **and** it overlaps an object not on the work list (keyboard, mouse, laptop, book [`work_classes`]) or no object YOLO recognizes | Weakest detector: COCO has no class for most ornaments. Writing with a pen looks similar; the book check reduces this. A chin or cheek resting on a curled hand is ignored by the face-box check; a phone at the ear is still caught by the phone detector. Upgrade path below |
 | Away | `person_present`, `shoulder_visibility` | No pose detected, or shoulder visibility under 0.5 [`away_shoulder_vis`], continuously for 10 s [`away_detect_s`]. Only then does the detector fire and the normal 60 s distraction hold (section 8) start, so an alert comes after about 70 s away | A user taking a break should press **Break**, which pauses detection |
 
-**When several fire at once**, the event takes the highest-priority label: phone, then desk objects, then looking away, then away. The UI and report show that label.
+**When several fire at once**, the event takes the highest-priority label: phone, then desk objects, then looking away, then away. The UI and report show that label. Labels are `phone`, `desk_object`, `window` or `looking_away`, and `away`; `window` uses the `looking_away` timer in `distraction_threshold_s`.
 
 **Desk-object upgrade path (if time allows):** photograph the team's actual ornaments (150 to 300 images), label them in Label Studio or Roboflow, and fine-tune YOLO26n on those plus COCO's work classes. This takes about one day and makes the detector far more reliable than the hand-only rule.
 
@@ -207,7 +208,7 @@ Posture is judged as change from the user's own calibrated upright posture, not 
 **Calibration (about 15 s, in the wizard and from Settings)**
 
 1. **Upright baseline, 10 s [`calibration.upright_s`]:** "Sit tall, shoulders back, look at your screen." Store the median of every posture metric, of head yaw and pitch, and of the shoulder midpoint. A frame counts only if a pose and a face are found and shoulder visibility is at least [`detectors.away_shoulder_vis`].
-2. **Window direction, 3 s [`calibration.window_s`], optional:** "Turn your head toward your window." Store the median head yaw. It fails if that yaw is within [`detectors.look_yaw_deg`] of the screen baseline, because the window could then never be told apart from the screen; the retry message shows the measured angle, and the user can skip the step.
+2. **Window direction, 3 s [`calibration.window_s`], optional:** "Turn your head toward your window and hold it." The 3 s start only once the head has turned more than [`detectors.look_yaw_deg`] from the screen, so the user can read the instruction first. Store the median head yaw. It fails if that yaw is within [`detectors.look_yaw_deg`] of the screen baseline, because the window could then never be told apart from the screen; the retry message shows the measured angle, and the user can skip the step.
 
 Each step passes when at least 80% of its frames [`calibration.min_valid_ratio`] count; otherwise the wizard shows a retry with the reason (for example "Move back or tilt the camera down so both shoulders are in view"). The result is saved as one row in the `calibration` table; the newest row is the one in use.
 
@@ -410,7 +411,8 @@ Settings live in `settings.json` next to the database. These defaults are the si
   "detectors": {
     "phone_conf": 0.45, "phone_hand_dist": 0.1, "phone_pitch_down_deg": 20,
     "look_yaw_deg": 25, "look_pitch_up_deg": 20, "window_yaw_tol_deg": 15,
-    "away_shoulder_vis": 0.5
+    "away_shoulder_vis": 0.5,
+    "work_classes": ["keyboard", "mouse", "laptop", "book"]
   },
   "calibration": {
     "upright_s": 10, "window_s": 3, "recalibrate_shift": 0.15,
