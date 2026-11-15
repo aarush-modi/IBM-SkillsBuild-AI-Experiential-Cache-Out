@@ -25,7 +25,7 @@ def feat(t: float, **kw: Any) -> FrameFeatures:
         t=t, person_present=True, shoulder_visibility=0.95,
         head_yaw=2.0, head_pitch=-5.0, head_roll=1.0,
         shoulder_width=0.3, shoulder_angle=0.5, shoulder_mid=(0.5, 0.45),
-        nose_to_shoulder_y=0.8, face_width=0.2,
+        nose_to_shoulder_y=0.8, face_width=0.2, face_bbox=(0.42, 0.2, 0.58, 0.42),
         hands=[], objects=[],
     )
     base.update(kw)
@@ -129,14 +129,35 @@ def test_window_yaw_is_stored() -> None:
     assert r.passed and r.value == pytest.approx(60.0)
 
 
-def test_window_too_close_to_screen_fails() -> None:
+def test_window_waits_for_the_turn_before_timing() -> None:
     b = baseline()
     step = C.WindowStep(settings(), b)
-    run(step, 3, lambda i, t: feat(t, head_yaw=b.head_yaw + 12))
+    # Still facing the screen (reading the instruction): the clock doesn't start.
+    run(step, 5, lambda i, t: feat(t, head_yaw=b.head_yaw + 5))
+    assert step.waiting and not step.done() and step.progress == 0.0
+    # Turned: now it times 3 s and passes.
+    for i in range(3 * 15 + 1):
+        step.add(feat(200 + i / 15, head_yaw=b.head_yaw + 50))
+    assert not step.waiting and step.done()
+    assert step.result().value == pytest.approx(b.head_yaw + 50)
+
+
+def test_window_turning_back_too_soon_fails_with_measured_angle() -> None:
+    b = baseline()
+    step = C.WindowStep(settings(), b)
+    # Turns past the threshold for one frame, then mostly back toward the screen.
+    run(step, 3, lambda i, t: feat(t, head_yaw=b.head_yaw + (40 if i == 0 else 12)))
     r = step.result()
     assert not r.passed and r.reason is not None
     # The message reports what was measured, so a failing setup can be diagnosed.
     assert r.reason.startswith("Your head turned only 12° from the screen; it needs more than 25°.")
+
+
+def test_window_face_lost_while_turned() -> None:
+    b = baseline()
+    step = C.WindowStep(settings(), b)
+    run(step, 3, lambda i, t: feat(t, head_yaw=b.head_yaw + 40 if i == 0 else None))
+    assert step.result().reason == C.WINDOW_FACE_LOST
 
 
 def test_window_to_the_other_side_also_counts() -> None:

@@ -51,6 +51,7 @@ DEFAULTS: dict[str, Any] = {
         "phone_conf": 0.45, "phone_hand_dist": 0.1, "phone_pitch_down_deg": 20,
         "look_yaw_deg": 25, "look_pitch_up_deg": 20, "window_yaw_tol_deg": 15,
         "away_shoulder_vis": 0.5,
+        "work_classes": ["keyboard", "mouse", "laptop", "book"],
     },
     "calibration": {
         "upright_s": 10, "window_s": 3, "recalibrate_shift": 0.15,

@@ -5,6 +5,7 @@ Usage: python scripts/calibrate_check.py [--camera N] [--save]
 If a calibration is already saved, it first runs the camera-moved check against it.
 With --save, the new calibration is stored in the app database (values only, no images).
 Keys: r retry a failed step, s skip the window step, q or Esc quit. Nothing else is saved.
+The terminal bell rings when each step finishes.
 """
 
 from __future__ import annotations
@@ -117,6 +118,7 @@ class Wizard:
         if self.step.done():
             self.result = self.step.result()
             self.result_at = time.monotonic()
+            print("\a", end="", flush=True)  # terminal bell: done, no need to look at the screen
             if self.result.passed:
                 if self.phase == "upright":
                     self.baseline = self.result.value
@@ -158,6 +160,8 @@ class Wizard:
             return [head, *retry, "Press r to retry" + (", s to skip" if p == "window" else "")]
         if time.monotonic() < self.ready_until:
             return [head, f"Starting in {self.ready_until - time.monotonic():.0f}..."]
+        if isinstance(self.step, C.WindowStep) and self.step.waiting:
+            return [head, "Turn your head toward the window and hold it"]
         progress = self.step.progress if self.step else 0.0
         return [head, f"Hold still... {progress * 100:.0f}%"]
 
