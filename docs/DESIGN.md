@@ -41,6 +41,25 @@ One person runs the app on themselves, and only they see the results. Because th
 - **First-run consent screen** explains what the camera analyses, what is stored and how to delete it. Settings include **Delete all my data**.
 - **Test footage:** clips recorded of team members for tuning are recorded with their consent, kept off shared drives, and deleted after the project.
 
+### Threats and mitigations
+
+FocusBand has no accounts, no server of its own and no cloud AI APIs, so the risks come down to two things: the ntfy topic, and the files on the user's laptop. Every item below is free to do.
+
+| Threat | Likelihood | Mitigation | Where / when |
+| --- | --- | --- | --- |
+| Someone learns the ntfy topic and reads alerts | Low | Topic from secrets.token_urlsafe(24) (about 190 bits). Stored only in the OS keychain via keyring. Never logged, never in settings.json or the database, and stripped from error messages. QR code shown only on the pairing screen | alerts/ntfy.py, pairing screen (P2) |
+| A leaked topic stays usable forever | Low | Re-pair watch button makes a new topic and QR code; the old topic is forgotten | Pairing screen (P2) |
+| Alert content reveals personal details | Low | Messages carry only kind, label, pattern and timestamp, as a short title and body such as "Phone — 1 min" (section 9). No session details, names, images or landmarks | alerts/ntfy.py (P2) |
+| No working keyring on the system | Low | Refuse to pair and explain why; never fall back to storing the topic in a file | alerts/ntfy.py (P2) |
+| Another user on the same computer reads the app data | Low | App data folder 0700 and files 0600 on macOS; on Windows, the per-user %APPDATA% folder | storage/settings.py, storage/db.py |
+| Laptop stolen or disk copied | Low | The database holds no images, only times, labels and scores. The consent screen recommends FileVault or BitLocker. No app-level database encryption, because SQLCipher adds a native dependency and key handling for little gain | Welcome and consent screen (P0) |
+| User wants their data gone | — | Delete my data removes the database, settings and keychain entry. Optional automatic deletion of sessions older than N days [`delete_sessions_after_days`], off by default | Welcome screen (P0), Settings |
+| A swapped or tampered model file runs code (.pt uses pickle) | Low | Model URLs pinned to fixed versions, with size and SHA-256 checked before use | scripts/download_models.py (done) |
+| Third-party libraries send telemetry | Medium | Ultralytics analytics off (YOLO_OFFLINE=1, event queue disabled), guarded by tests | vision/objects.py (done) |
+| Frames, landmarks or the topic leak into logs or files | Low | No frame writes in app code. Acceptance check: after a session, the app data folder has no image or video files and no copy of the topic | Section 12 acceptance criteria |
+
+**Accepted risk:** ntfy.sh is a third-party public server, so anyone holding the topic can read its messages. End-to-end encryption isn't possible with the stock iPhone ntfy app, because it shows message text as-is. The topic's randomness and the minimal messages are the protection. If that ever becomes a concern, self-host ntfy (only ntfy_server changes) or move decryption into the custom watch app (stretch).
+
 ## 3. Requirements
 
 Seventeen functional requirements; P0 items alone make a complete demo.
@@ -374,6 +393,7 @@ Settings live in `settings.json` next to the database. These defaults are the si
   "posture_cooldown_s": 300,
   "snooze_s": 600,
   "auto_pause_away_s": 600,
+  "delete_sessions_after_days": null,
 
   "vision": {
     "capture_width": 640, "capture_height": 480, "capture_fps": 30,
@@ -407,6 +427,8 @@ Settings live in `settings.json` next to the database. These defaults are the si
 ```
 
 The ntfy topic is stored in the OS keychain (via the `keyring` package), not in plain JSON; the JSON keeps only a flag that a watch is paired and the server URL.
+
+`delete_sessions_after_days` is off (`null`) by default. When set to N, sessions that started more than N days ago are deleted at app start, together with their `events` and `posture_samples` rows. Calibration rows are kept. The Settings screen offers off, 7, 30 or 90 days.
 
 ## 12. Repository, testing and acceptance
 
@@ -447,6 +469,7 @@ focusband/
 - [ ] Alerts reach the desktop within 1 s when no watch is paired, and reach a paired Apple Watch within 5 s through ntfy.
 - [ ] The session report matches the events logged during the session.
 - [ ] A search of the app data folder after a session finds no image or video files.
+- [ ] No copy of the ntfy topic appears in the settings file, database or logs.
 
 ## 13. Two-week plan, IBM Bob and risks
 
