@@ -251,12 +251,17 @@ A distraction must hold for 60 s before an alert is sent, and 5 s of focus reset
      |  v
    +--------------------------------+
    | Paused                         |   Pause works from any state.
-   | (Pause, Break or Snooze;       |   The session auto-pauses after 10 min away.
+   | (Pause or Break; camera off;   |   The session auto-pauses after 10 min away.
    |  Resume returns to Focused)    |
    +--------------------------------+
 ```
 
 Any of the four distractions starts the Pending timer once its detector fires. For being away, the detector itself only fires after 10 s of absence (section 6), so Pending starts 10 s after the user leaves. 5 s of focus at any point sends the user back to Focused.
+
+- **Focus** means present and facing the screen: no detector firing and not absent. Being out of view for less than `away_detect_s` is neither focus nor distraction, so it neither cancels nor advances anything.
+- **One distraction, one timer.** If the label changes during a distraction (looking away, then the phone), the clock keeps running from when it began and is compared with the threshold of the current type. The alert carries the current label; the logged event keeps the highest-priority label seen.
+- **Snooze mutes alerts only.** For `snooze_s`, no distraction or posture alerts are sent, but the camera stays on and detection, timers and logging carry on. It ends by itself, or when the user un-snoozes. Pause and Break release the camera; Resume starts detectors and posture fresh while the session clock carries on.
+- **What is logged:** a distraction (or away) event from when it began until focus returned, but only once it reached an alert, so harmless glances cancelled within the hold are not recorded. Also every alert, each stretch of bad posture, and each pause, break and snooze. Time in a distraction, including its pending minute, does not count toward `focus_seconds`.
 
 | Rule | Default | Settings key | In the Settings screen |
 | --- | --- | --- | --- |
@@ -358,7 +363,7 @@ CREATE TABLE sessions (
 CREATE TABLE events (
   id INTEGER PRIMARY KEY,
   session_id INTEGER REFERENCES sessions(id),
-  kind TEXT NOT NULL,                -- distraction | posture | away | break | pause | alert
+  kind TEXT NOT NULL,                -- distraction | posture | away | break | pause | snooze | alert
   label TEXT,                        -- phone, window, desk_object, slouching, ...
   started_at TEXT NOT NULL,
   ended_at TEXT,
