@@ -20,12 +20,14 @@ from app.alerts import messages
 from app.contracts import PATTERN_TEST, Alert
 from app.logic.calibration import Calibration, OutdatedCalibration
 from app.logic.pomodoro import Pomodoro
+from app.logic.report import build_report
 from app.runtime import Engine, Status
 from app.storage import settings as settings_mod
 from app.storage.db import Database, delete_all_data
 from app.storage.settings import DEFAULTS
 from app.ui import theme
 from app.ui.home import HomePage
+from app.ui.report import TOP_ISSUES, ReportPage
 from app.ui.session import SessionPage
 from app.ui.settings import SettingsDialog
 from app.ui.tray import Tray, dot_icon
@@ -68,8 +70,9 @@ class MainWindow(QMainWindow):
         self.wizard = WizardPage(settings)
         self.home = HomePage()
         self.session = SessionPage()
+        self.report = ReportPage(settings["posture"]["bad_score"])
         self.stack = QStackedWidget()
-        for page in (self.welcome, self.wizard, self.home, self.session):
+        for page in (self.welcome, self.wizard, self.home, self.session, self.report):
             self.stack.addWidget(page)
         self.setCentralWidget(self.stack)
         self.tray = Tray()
@@ -81,6 +84,8 @@ class MainWindow(QMainWindow):
         self.home.start_requested.connect(self.start_session)
         self.home.recalibrate_requested.connect(self.recalibrate)
         self.home.settings_requested.connect(self.open_settings)
+        self.home.report_requested.connect(self.show_report)
+        self.report.done.connect(lambda: self.stack.setCurrentWidget(self.home))
         self.session.pause_toggled.connect(self.toggle_pause)
         self.session.break_requested.connect(lambda: self._pause("break"))
         self.session.snooze_toggled.connect(self.toggle_snooze)
@@ -188,15 +193,25 @@ class MainWindow(QMainWindow):
     def _overlay_toggled(self, on: bool) -> None:
         self.session.overlay = on
 
-    def _session_ended(self) -> None:
+    def _session_ended(self, session_id: int | None) -> None:
         self.in_session = False
         self.pomodoro = None
         self._refresh_home()
         if self._recalibrate_after_end:
             self._recalibrate_after_end = False
             self.recalibrate()
-        else:
+        elif session_id is None or not self.show_report(session_id):
             self.stack.setCurrentWidget(self.home)
+
+    def show_report(self, session_id: int) -> bool:
+        """Show the report for a stored session; False if there is nothing to show."""
+        session = self.db.session(session_id)
+        if session is None or not session.get("ended_at"):
+            return False
+        report = build_report(session, self.db.events(session_id), self.db.posture_samples(session_id), TOP_ISSUES)
+        self.report.show_report(report)
+        self.stack.setCurrentWidget(self.report)
+        return True
 
     def _tray_session(self) -> None:
         if self.in_session:
@@ -310,7 +325,7 @@ class MainWindow(QMainWindow):
         elif st.kind == "auto_paused":
             self.session.set_paused("away")
         elif st.kind == "session_ended":
-            self._session_ended()
+            self._session_ended(st.data)
 
     def _refresh_home(self) -> None:
         self.home.set_ready(self.engine.models_ready, self.calibration is not None)

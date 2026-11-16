@@ -13,7 +13,7 @@ import pytest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtWidgets import QApplication, QMessageBox  # noqa: E402
+from PySide6.QtWidgets import QApplication, QLabel, QMessageBox  # noqa: E402
 
 from app.alerts.ble_band import BleBandSink  # noqa: E402
 from app.alerts.dispatcher import Dispatcher  # noqa: E402
@@ -104,8 +104,14 @@ def test_first_run_consent_calibrate_and_session(qapp: QApplication, window: Mai
     pump(qapp, lambda: w.engine.camera_on)
 
     w.session.end_btn.click()
-    pump(qapp, lambda: w.stack.currentWidget() is w.home)
-    assert not w.in_session and "focused" in w.home.last_session.text()
+    pump(qapp, lambda: w.stack.currentWidget() is w.report)  # the report opens at the end
+    assert not w.in_session
+    assert "focused" in w.report.stats.itemAt(0).widget().findChildren(QLabel)[1].text()
+    w.report.done.emit()
+    assert w.stack.currentWidget() is w.home
+    assert "focused" in w.home.last_session.text() and not w.home.report_btn.isHidden()
+    w.home.report_btn.click()                                # reopen it from Home
+    assert w.stack.currentWidget() is w.report
 
 
 def test_settings_round_trip(qapp: QApplication) -> None:

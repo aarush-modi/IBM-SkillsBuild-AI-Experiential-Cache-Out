@@ -66,7 +66,7 @@ def stylesheet(p: Palette) -> str:
     QLabel#timer {{ font-size: 40px; font-weight: 600; }}
     QLabel#big {{ font-size: 22px; font-weight: 600; }}
     QFrame#card {{ background: {p.surface}; border: 1px solid {p.border}; border-radius: 12px; }}
-    QFrame#card QLabel, QFrame#card QCheckBox {{ background: transparent; }}
+    QFrame#card QLabel, QFrame#card QCheckBox, QWidget#plain {{ background: transparent; }}
     QCheckBox {{ spacing: 8px; }}
     QCheckBox::indicator {{
         width: 16px; height: 16px; border: 1px solid {p.muted}; border-radius: 4px; background: {p.surface};
