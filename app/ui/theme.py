@@ -80,6 +80,7 @@ def stylesheet(p: Palette) -> str:
         padding: 8px 16px; min-height: 20px;
     }}
     QPushButton:hover {{ border-color: {p.accent}; }}
+    QPushButton:checked {{ background: {p.tip_bg}; border-color: {p.accent}; color: {p.accent}; font-weight: 600; }}
     QPushButton:disabled {{ color: {p.muted}; }}
     QPushButton#primary {{
         background: {p.accent}; color: {p.accent_text}; border: none; font-weight: 600;

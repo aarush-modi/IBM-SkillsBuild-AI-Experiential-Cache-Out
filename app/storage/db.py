@@ -176,6 +176,16 @@ class Database:
         finally:
             self._conn.row_factory = None
 
+    def sessions_since(self, cutoff: datetime) -> list[dict[str, Any]]:
+        """Finished sessions that started at or after `cutoff`, oldest first (dashboard)."""
+        cutoff = cutoff.astimezone()
+        self._conn.row_factory = sqlite3.Row
+        try:
+            rows = self._conn.execute("SELECT * FROM sessions WHERE ended_at IS NOT NULL ORDER BY id").fetchall()
+        finally:
+            self._conn.row_factory = None
+        return [dict(r) for r in rows if datetime.fromisoformat(r["started_at"]) >= cutoff]
+
     def events(self, session_id: int) -> list[dict[str, Any]]:
         self._conn.row_factory = sqlite3.Row
         try:
