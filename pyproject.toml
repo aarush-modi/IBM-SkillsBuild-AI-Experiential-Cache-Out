@@ -8,7 +8,7 @@ testpaths = ["tests/unit"]
 
 [tool.mypy]
 python_version = "3.12"
-files = ["app/contracts.py", "app/runtime.py", "app/main.py", "app/ui", "app/logic", "app/alerts", "app/storage", "app/vision", "scripts"]
+files = ["app/contracts.py", "app/runtime.py", "app/main.py", "app/ui", "app/logic", "app/alerts", "app/storage", "app/vision", "scripts", "tests/eval.py"]
 strict = true
 
 [[tool.mypy.overrides]]
