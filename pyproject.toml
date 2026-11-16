@@ -12,5 +12,5 @@ files = ["app/contracts.py", "app/runtime.py", "app/main.py", "app/ui", "app/log
 strict = true
 
 [[tool.mypy.overrides]]
-module = ["mediapipe", "mediapipe.*"]
+module = ["mediapipe", "mediapipe.*", "pyqtgraph", "pyqtgraph.*"]
 ignore_missing_imports = true

@@ -13,13 +13,16 @@ from app.ui.widgets import card, label
 
 def minutes(seconds: float) -> str:
     m = int(round(seconds / 60))
-    return f"{m // 60} h {m % 60} min" if m >= 60 else f"{m} min"
+    if m >= 60:
+        return f"{m // 60} h" + (f" {m % 60} min" if m % 60 else "")
+    return f"{m} min"
 
 
 class HomePage(QWidget):
     start_requested = Signal(bool)   # Pomodoro on?
     recalibrate_requested = Signal()
     settings_requested = Signal()
+    report_requested = Signal(int)   # session id
 
     def __init__(self) -> None:
         super().__init__()
@@ -30,17 +33,22 @@ class HomePage(QWidget):
         self.pomodoro = QCheckBox("Pomodoro")
         self.pomodoro_note = label("", "muted")
         self.last_session = label("No sessions yet.", "muted")
+        self.report_btn = QPushButton("View report")
+        self.report_btn.hide()
+        self._last_id: int | None = None
         recal = QPushButton("Recalibrate")
         settings_btn = QPushButton("Settings")
 
         self.start_btn.clicked.connect(lambda: self.start_requested.emit(self.pomodoro.isChecked()))
         recal.clicked.connect(self.recalibrate_requested)
+        self.report_btn.clicked.connect(
+            lambda: self.report_requested.emit(self._last_id) if self._last_id is not None else None)
         settings_btn.clicked.connect(self.settings_requested)
 
         start_card = card(label("Ready when you are", "subtitle"), self.status, self.start_btn,
                           self.pomodoro, self.pomodoro_note)
         start_card.setMaximumWidth(460)
-        last_card = card(label("Last session", "subtitle"), self.last_session)
+        last_card = card(label("Last session", "subtitle"), self.last_session, self.report_btn)
         last_card.setMaximumWidth(460)
         extra = QHBoxLayout()
         extra.addWidget(recal)
@@ -79,7 +87,11 @@ class HomePage(QWidget):
     def set_last_session(self, row: dict[str, Any] | None) -> None:
         if not row or not row.get("ended_at"):
             self.last_session.setText("No sessions yet.")
+            self._last_id = None
+            self.report_btn.hide()
             return
+        self._last_id = int(row["id"])
+        self.report_btn.show()
         start = datetime.fromisoformat(row["started_at"])
         total = (datetime.fromisoformat(row["ended_at"]) - start).total_seconds()
         score = row.get("avg_posture_score")
