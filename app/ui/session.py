@@ -6,12 +6,12 @@ from __future__ import annotations
 import time
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtWidgets import QCheckBox, QGridLayout, QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QCheckBox, QHBoxLayout, QLabel, QProgressBar, QSizePolicy, QVBoxLayout, QWidget
 
 from app.logic.pomodoro import PomodoroTick
 from app.logic.session import SessionUpdate
 from app.ui import theme
-from app.ui.widgets import Banner, PreviewView, card, label
+from app.ui.widgets import Banner, PreviewView, button, card, divider, label, page_layout, tabular
 from app.vision.overlay import draw_overlay, posture_line_colors
 from app.vision.pipeline import PreviewFrame
 
@@ -46,24 +46,27 @@ class SessionPage(QWidget):
         self.preview = PreviewView("Camera off")
         self.camera_dot = QLabel("● Camera on")
         self.overlay_box = QCheckBox("Skeleton overlay")
-        self.chip = QLabel("FOCUSED")
-        self.chip.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.chip = QLabel("● Focused")
+        self.chip.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed)
         self.timer = label("0:00:00", "timer", wrap=False)
-        self.focus_time = label("Focused 0:00:00", "muted")
+        self.focus_time = label("0:00:00 focused", "muted")
         self.countdown = label("", "muted")
         self.pomodoro = label("", "muted")
-        self.posture = label("–", "big")
+        self.posture = label("–", "big", wrap=False)
+        tabular(self.posture)
+        self.posture_bar = QProgressBar()
+        self.posture_bar.setRange(0, 100)
+        self.posture_bar.setTextVisible(False)
         self.tip = Banner("tip")
         self.hint = Banner("warn")
         self.alert = Banner("warn")
         self.moved = Banner("warn")
-        self.recal_btn = QPushButton("Recalibrate")
+        self.recal_btn = button("Recalibrate")
         self.recal_btn.hide()
-        self.pause_btn = QPushButton("Pause")
-        self.break_btn = QPushButton("Break")
-        self.snooze_btn = QPushButton("Snooze 10 min")
-        self.end_btn = QPushButton("End session")
-        self.end_btn.setObjectName("danger")
+        self.pause_btn = button("Pause")
+        self.break_btn = button("Break")
+        self.snooze_btn = button("Snooze 10 min")
+        self.end_btn = button("End session", "danger")
 
         self.overlay_box.toggled.connect(self.overlay_toggled)
         self.pause_btn.clicked.connect(self.pause_toggled)
@@ -72,12 +75,20 @@ class SessionPage(QWidget):
         self.end_btn.clicked.connect(self.end_requested)
         self.recal_btn.clicked.connect(self.recalibrate_requested)
 
-        status = card(self.chip, self.timer, self.focus_time, self.countdown, self.pomodoro, spacing=6)
-        status.setMinimumWidth(280)
-        posture = card(label("Posture score", "muted"), self.posture, spacing=4)
+        posture_row = QHBoxLayout()
+        posture_row.addWidget(label("Posture", "eyebrow", wrap=False))
+        posture_row.addStretch()
+        posture_row.addWidget(self.posture)
+        status = card(
+            self.chip, self.timer, self.focus_time, self.countdown, self.pomodoro,
+            divider(), posture_row, self.posture_bar, spacing=10, margins=(24, 24, 24, 24),
+        )
+        status.body.setAlignment(self.chip, Qt.AlignmentFlag.AlignLeft)
+        status.setMinimumWidth(300)
+        status.setMaximumWidth(360)
         side = QVBoxLayout()
+        side.setSpacing(16)
         side.addWidget(status)
-        side.addWidget(posture)
         side.addWidget(self.moved)
         side.addWidget(self.recal_btn)
         side.addStretch()
@@ -87,22 +98,23 @@ class SessionPage(QWidget):
         under.addStretch()
         under.addWidget(self.overlay_box)
         left = QVBoxLayout()
-        left.addWidget(self.preview, 1)
+        left.setSpacing(12)
         left.addLayout(under)
+        left.addWidget(self.preview, 1)
 
         top = QHBoxLayout()
-        top.addLayout(left, 3)
-        top.addLayout(side, 1)
+        top.setSpacing(24)
+        top.addLayout(left, 1)
+        top.addLayout(side)
 
-        buttons = QGridLayout()
-        for i, b in enumerate((self.pause_btn, self.break_btn, self.snooze_btn)):
-            buttons.addWidget(b, 0, i)
-        buttons.setColumnStretch(3, 1)
-        buttons.addWidget(self.end_btn, 0, 4)
+        buttons = QHBoxLayout()
+        buttons.setSpacing(8)
+        for b in (self.pause_btn, self.break_btn, self.snooze_btn):
+            buttons.addWidget(b)
+        buttons.addStretch()
+        buttons.addWidget(self.end_btn)
 
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(28, 24, 28, 20)
-        layout.setSpacing(12)
+        layout = page_layout(self, margins=(32, 28, 32, 24), spacing=16)
         layout.addLayout(top, 1)
         layout.addWidget(self.alert)
         layout.addWidget(self.hint)
@@ -130,8 +142,9 @@ class SessionPage(QWidget):
         self.tip.set(None)
         self.hint.set(None)
         self.timer.setText("0:00:00")
-        self.focus_time.setText("Focused 0:00:00")
+        self.focus_time.setText("0:00:00 focused")
         self.posture.setText("–")
+        self.posture_bar.setValue(0)
         self.set_paused(None)
 
     def show_preview(self, preview: PreviewFrame) -> None:
@@ -148,7 +161,7 @@ class SessionPage(QWidget):
         f = u.focus
         self.snoozed = f.snoozed_for_s > 0
         self.timer.setText(clock(f.t))
-        self.focus_time.setText(f"Focused {clock(f.focus_seconds)}")
+        self.focus_time.setText(f"{clock(f.focus_seconds)} focused")
         if f.state == "paused":
             return
         name = LABELS.get(f.label or "", "")
@@ -165,6 +178,10 @@ class SessionPage(QWidget):
         self.snooze_btn.setText("Unsnooze" if self.snoozed else "Snooze 10 min")
         p = u.posture
         self.posture.setText("–" if p.score is None else f"{p.score:.0f}")
+        if p.score is not None:
+            self.posture_bar.setValue(int(p.score))
+        color = theme.current().pending if p.bad else theme.current().focused
+        self.posture_bar.setStyleSheet(f"QProgressBar::chunk {{ background: {color}; border-radius: 3px; }}")
         self.tip.set(p.tip)
         self.hint.set(u.camera_hint)
         if u.camera_moved:
@@ -203,8 +220,8 @@ class SessionPage(QWidget):
             self.pomodoro.setText(f"Pomodoro: {phase} {mmss(tick.left_s)} left")
 
     def set_state(self, state: str, detail: str = "") -> None:
-        text = {"focused": "FOCUSED", "pending": "DISTRACTED?", "distracted": "DISTRACTED", "paused": "PAUSED"}[state]
-        self.chip.setText(f"{text} · {detail}" if detail and state != "focused" else text)
+        text = {"focused": "Focused", "pending": "Distracted?", "distracted": "Distracted", "paused": "Paused"}[state]
+        self.chip.setText("● " + (f"{text} · {detail}" if detail and state != "focused" else text))
         self.chip.setStyleSheet(theme.chip_style(state))
 
     def tick(self) -> None:

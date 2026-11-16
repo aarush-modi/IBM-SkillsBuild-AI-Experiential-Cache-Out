@@ -11,6 +11,7 @@ ROOT = Path(SPECPATH).parent
 datas = [
     (str(ROOT / "models"), "models"),                         # MediaPipe .task files and yolo26n.pt
     (str(ROOT / "app" / "alerts" / "sounds"), "app/alerts/sounds"),
+    (str(ROOT / "app" / "ui" / "icons"), "app/ui/icons"),
 ]
 datas += collect_data_files("mediapipe")
 datas += collect_data_files("desktop_notifier")

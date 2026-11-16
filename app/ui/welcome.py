@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 from PySide6.QtCore import Signal
-from PySide6.QtWidgets import QCheckBox, QHBoxLayout, QPushButton, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QCheckBox, QHBoxLayout, QVBoxLayout, QWidget
 
-from app.ui.widgets import card, label
+from app.ui.widgets import button, card, divider, label, plain
+
+COLUMN_W = 680
 
 WHAT_IT_DOES = (
     "FocusBand watches you through your webcam while a session is running and lets you know, "
@@ -35,29 +37,48 @@ class WelcomePage(QWidget):
     def __init__(self) -> None:
         super().__init__()
         self.agree = QCheckBox("I understand how FocusBand uses my camera")
-        self.continue_btn = QPushButton("Continue to calibration")
-        self.continue_btn.setObjectName("primary")
+        self.continue_btn = button("Continue to calibration", "primary")
         self.continue_btn.setEnabled(False)
-        delete_btn = QPushButton("Delete my data")
-        delete_btn.setObjectName("danger")
+        delete_btn = button("Delete my data", "ghost")
 
         self.agree.toggled.connect(self.continue_btn.setEnabled)
         self.continue_btn.clicked.connect(self.accepted)
         delete_btn.clicked.connect(self.delete_requested)
+
+        points = card(spacing=18, margins=(28, 26, 28, 26))
+        for i, (heading, text) in enumerate((("What the camera sees", WHAT_IT_SEES),
+                                             ("What is stored", WHAT_IT_STORES),
+                                             ("When the camera is on", CAMERA_NOTE))):
+            if i:
+                points.body.addWidget(divider())
+            block = QVBoxLayout()
+            block.setSpacing(6)
+            block.addWidget(label(heading, "strong"))
+            block.addWidget(label(text, "muted"))
+            points.body.addLayout(block)
 
         buttons = QHBoxLayout()
         buttons.addWidget(delete_btn)
         buttons.addStretch()
         buttons.addWidget(self.continue_btn)
 
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(48, 40, 48, 32)
-        layout.setSpacing(16)
-        layout.addWidget(label("Welcome to FocusBand", "title"))
-        layout.addWidget(label(WHAT_IT_DOES, "muted"))
-        layout.addWidget(card(label("What the camera sees", "subtitle"), label(WHAT_IT_SEES)))
-        layout.addWidget(card(label("What is stored", "subtitle"), label(WHAT_IT_STORES)))
-        layout.addWidget(label(CAMERA_NOTE, "muted"))
+        column = QVBoxLayout()
+        column.setSpacing(0)
+        column.addWidget(label("Welcome to FocusBand", "title"))
+        column.addSpacing(10)
+        column.addWidget(label(WHAT_IT_DOES, "lead"))
+        column.addSpacing(28)
+        column.addWidget(points)
+        column.addSpacing(28)
+        column.addWidget(self.agree)
+        column.addSpacing(20)
+        column.addLayout(buttons)
+        column.addStretch()
+        body = plain(column)
+        body.setMaximumWidth(COLUMN_W)
+
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(40, 48, 40, 36)
         layout.addStretch()
-        layout.addWidget(self.agree)
-        layout.addLayout(buttons)
+        layout.addWidget(body, 1)
+        layout.addStretch()

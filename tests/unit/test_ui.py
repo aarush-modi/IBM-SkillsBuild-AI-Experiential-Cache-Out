@@ -95,7 +95,7 @@ def test_first_run_consent_calibrate_and_session(qapp: QApplication, window: Mai
     w.home.start_btn.click()
     assert w.stack.currentWidget() is w.session and w.in_session
     pump(qapp, lambda: w.session.timer.text() != "0:00:00")
-    assert w.session.chip.text() == "FOCUSED"
+    assert w.session.chip.text() == "● Focused"
 
     w.session.pause_btn.click()
     assert w.session.paused_reason == "pause" and w.session.pause_btn.text() == "Resume"
@@ -109,7 +109,8 @@ def test_first_run_consent_calibrate_and_session(qapp: QApplication, window: Mai
     assert "focused" in w.report.stats.itemAt(0).widget().findChildren(QLabel)[1].text()
     w.report.done.emit()
     assert w.stack.currentWidget() is w.home
-    assert "focused" in w.home.last_session.text() and not w.home.report_btn.isHidden()
+    captions = [lab.text() for lab in w.home.tiles_box.findChildren(QLabel)]
+    assert any("focused" in c for c in captions) and not w.home.report_btn.isHidden()
     w.home.report_btn.click()                                # reopen it from Home
     assert w.stack.currentWidget() is w.report
 
