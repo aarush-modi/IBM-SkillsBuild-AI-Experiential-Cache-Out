@@ -10,17 +10,51 @@ from __future__ import annotations
 import copy
 from typing import Any
 
-from PySide6.QtCore import Signal
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
-    QCheckBox, QComboBox, QDialog, QFormLayout, QGroupBox, QHBoxLayout, QPushButton, QSpinBox,
-    QVBoxLayout, QWidget,
+    QCheckBox, QComboBox, QDialog, QFormLayout, QHBoxLayout, QSpinBox, QTabWidget, QVBoxLayout, QWidget,
 )
 
-from app.ui.widgets import label
+from app.ui.widgets import button, label
+
+
+def hug(*widgets: QWidget) -> QHBoxLayout:
+    """Widgets at their natural width, left-aligned (form rows otherwise stretch them)."""
+    row = QHBoxLayout()
+    row.setSpacing(8)
+    for w in widgets:
+        row.addWidget(w)
+    row.addStretch()
+    return row
+
+
+def spacer() -> QWidget:
+    w = QWidget()
+    w.setFixedHeight(6)
+    return w
 
 DISTRACTIONS = [("phone", "Phone"), ("looking_away", "Looking away"), ("desk_object", "Desk object"),
                 ("away", "Away from desk")]
 RETENTION = [("Keep forever", None), ("7 days", 7), ("30 days", 30), ("90 days", 90)]
+
+
+def form() -> QFormLayout:
+    f = QFormLayout()
+    f.setContentsMargins(4, 24, 4, 8)
+    f.setHorizontalSpacing(28)
+    f.setVerticalSpacing(14)
+    f.setLabelAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+    f.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.FieldsStayAtSizeHint)
+    return f
+
+
+def tab(f: QFormLayout) -> QWidget:
+    w = QWidget()
+    outer = QVBoxLayout(w)
+    outer.setContentsMargins(0, 0, 0, 0)
+    outer.addLayout(f)
+    outer.addStretch()
+    return w
 
 
 def spin(lo: int, hi: int, value: float, suffix: str) -> QSpinBox:
@@ -39,25 +73,22 @@ class SettingsDialog(QDialog):
     def __init__(self, settings: dict[str, Any], in_session: bool, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setWindowTitle("FocusBand settings")
-        self.setMinimumWidth(520)
+        self.setMinimumWidth(600)
         self.original = settings
         s = settings
 
         # Distractions: 15 s to 5 min per type.
         self.thresholds = {k: spin(15, 300, s["distraction_threshold_s"][k], " s") for k, _ in DISTRACTIONS}
-        dist = QFormLayout()
+        dist = form()
         for k, name in DISTRACTIONS:
             dist.addRow(f"{name}: remind after", self.thresholds[k])
+        dist.addRow(spacer())
         self.repeat_on = QCheckBox("Repeat while still distracted, every")
         self.repeat_on.setChecked(s["repeat_alert_s"] is not None)
         self.repeat = spin(1, 10, (s["repeat_alert_s"] or 120) / 60, " min")
         self.repeat_on.toggled.connect(self.repeat.setEnabled)
         self.repeat.setEnabled(self.repeat_on.isChecked())
-        rep = QHBoxLayout()
-        rep.addWidget(self.repeat_on)
-        rep.addWidget(self.repeat)
-        rep.addStretch()
-        dist.addRow(rep)
+        dist.addRow(self.repeat_on, self.repeat)
         self.escalate = QCheckBox("Stronger sound from the 3rd reminder")
         self.escalate.setChecked(s["escalate_after_repeats"] is not None)
         dist.addRow(self.escalate)
@@ -65,44 +96,37 @@ class SettingsDialog(QDialog):
         dist.addRow("Snooze length", self.snooze)
         self.auto_pause = spin(5, 30, s["auto_pause_away_s"] / 60, " min")
         dist.addRow("Pause the session after away for", self.auto_pause)
-        dist_box = QGroupBox("Distractions")
-        dist_box.setLayout(dist)
 
         # Posture and Pomodoro.
         self.posture = spin(1, 10, s["posture_threshold_s"] / 60, " min")
         self.work = spin(10, 90, s["pomodoro"]["work_min"], " min")
         self.brk = spin(3, 30, s["pomodoro"]["break_min"], " min")
-        other = QFormLayout()
+        other = form()
         other.addRow("Posture: remind after bad posture for", self.posture)
         other.addRow("Pomodoro focus", self.work)
         other.addRow("Pomodoro break", self.brk)
-        other_box = QGroupBox("Posture and Pomodoro")
-        other_box.setLayout(other)
 
         # Camera, display and alerts.
         self.camera = QComboBox()
         self.set_cameras([s["camera_index"]], s["camera_index"])
-        find = QPushButton("Find cameras")
+        find = button("Find cameras")
         find.setEnabled(not in_session)
         find.clicked.connect(self.find_cameras_requested)
-        cam_row = QHBoxLayout()
-        cam_row.addWidget(self.camera, 1)
-        cam_row.addWidget(find)
+        cam_row = hug(self.camera, find)
         self.overlay = QCheckBox("Show the skeleton overlay by default")
         self.overlay.setChecked(bool(s["overlay"]))
         self.ping = QCheckBox("Play a sound with each alert")
         self.ping.setChecked(bool(s["alerts"]["ping"]))
-        test = QPushButton("Send test alert")
+        test = button("Send test alert")
         test.clicked.connect(self.test_alert_requested)
         band = label("FocusBand band: coming soon (design only)", "muted")
-        dev = QFormLayout()
+        dev = form()
         dev.addRow("Camera", cam_row)
         dev.addRow(self.overlay)
         dev.addRow(self.ping)
-        dev.addRow(test)
+        dev.addRow(spacer())
+        dev.addRow(hug(test))
         dev.addRow(band)
-        dev_box = QGroupBox("Camera and alerts")
-        dev_box.setLayout(dev)
 
         # Data.
         self.retention = QComboBox()
@@ -110,18 +134,22 @@ class SettingsDialog(QDialog):
             self.retention.addItem(name, days)
         self.retention.setCurrentIndex(next(
             (i for i, (_, d) in enumerate(RETENTION) if d == s["delete_sessions_after_days"]), 0))
-        delete = QPushButton("Delete my data…")
-        delete.setObjectName("danger")
+        delete = button("Delete my data…", "danger")
         delete.clicked.connect(self.delete_requested)
-        data = QFormLayout()
+        data = form()
         data.addRow("Delete sessions older than", self.retention)
-        data.addRow(delete)
-        data_box = QGroupBox("Your data")
-        data_box.setLayout(data)
+        data.addRow(label("Your sessions, posture scores and calibration stay on this computer.", "muted"))
+        data.addRow(spacer())
+        data.addRow(hug(delete))
 
-        save = QPushButton("Save")
-        save.setObjectName("primary")
-        cancel = QPushButton("Cancel")
+        self.tabs = QTabWidget()
+        self.tabs.tabBar().setDrawBase(False)
+        for f, name in ((dist, "Distractions"), (other, "Posture and Pomodoro"), (dev, "Camera and alerts"),
+                        (data, "Your data")):
+            self.tabs.addTab(tab(f), name)
+
+        save = button("Save", "primary")
+        cancel = button("Cancel", "ghost")
         save.clicked.connect(self.accept)
         cancel.clicked.connect(self.reject)
         buttons = QHBoxLayout()
@@ -130,9 +158,10 @@ class SettingsDialog(QDialog):
         buttons.addWidget(save)
 
         layout = QVBoxLayout(self)
-        layout.setSpacing(10)
-        for box in (dist_box, other_box, dev_box, data_box):
-            layout.addWidget(box)
+        layout.setContentsMargins(32, 28, 32, 24)
+        layout.setSpacing(16)
+        layout.addWidget(label("Settings", "big", wrap=False))
+        layout.addWidget(self.tabs, 1)
         if in_session:
             layout.addWidget(label("Changes apply from the next session; the alert sound changes now.", "muted"))
         layout.addLayout(buttons)

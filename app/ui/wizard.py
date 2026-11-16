@@ -11,18 +11,18 @@ import time
 from typing import Any
 
 from PySide6.QtCore import Signal
-from PySide6.QtWidgets import QHBoxLayout, QProgressBar, QPushButton, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QHBoxLayout, QProgressBar, QVBoxLayout, QWidget
 
 from app.contracts import FrameFeatures
 from app.logic import calibration as C
-from app.ui.widgets import Banner, PreviewView, card, label
+from app.ui.widgets import Banner, PreviewView, button, card, label, page_header, page_layout, set_eyebrow
 
 GET_READY_S = 3.0  # UI countdown before each step
 
 STEPS = {
-    "upright": ("Step 1 of 2: Sit up straight",
+    "upright": ("Step 1 of 2", "Sit up straight",
                 "Sit tall with your shoulders back and look at your screen, as you would when working well."),
-    "window": ("Step 2 of 2: Window direction (optional)",
+    "window": ("Step 2 of 2 · optional", "Window direction",
                "If there's a window you tend to look out of, turn your head toward it and hold it there. "
                "Skip this if there isn't one."),
 }
@@ -36,44 +36,50 @@ class WizardPage(QWidget):
         super().__init__()
         self.settings = settings
         self.preview = PreviewView("Starting the camera…")
-        self.heading = label("", "subtitle")
-        self.instruction = label("")
-        self.status = label("", "big")
+        self.step_label = label("", "eyebrow", wrap=False)
+        self.heading = label("", "big")
+        self.instruction = label("", "muted")
+        self.status = label("", "subtitle")
         self.progress = QProgressBar()
         self.progress.setRange(0, 100)
         self.progress.setTextVisible(False)
         self.result = Banner("warn")
-        self.primary = QPushButton("Start")
-        self.primary.setObjectName("primary")
-        self.skip_btn = QPushButton("Skip this step")
-        self.cancel_btn = QPushButton("Cancel")
+        self.primary = button("Start", "primary")
+        self.skip_btn = button("Skip this step")
+        self.cancel_btn = button("Cancel", "ghost")
 
         self.primary.clicked.connect(self._on_primary)
         self.skip_btn.clicked.connect(self._skip_window)
         self.cancel_btn.clicked.connect(self.cancelled)
 
-        side = card(self.heading, self.instruction, self.status, self.progress, self.result)
-        side.setMinimumWidth(320)
+        side = card(self.step_label, self.heading, self.instruction, spacing=10, margins=(28, 26, 28, 28))
+        side.body.addSpacing(14)
+        side.body.addWidget(self.status)
+        side.body.addWidget(self.progress)
+        side.body.addWidget(self.result)
+        side.setMinimumWidth(340)
+        side.setMaximumWidth(420)
         buttons = QHBoxLayout()
+        buttons.setSpacing(8)
         buttons.addWidget(self.cancel_btn)
         buttons.addStretch()
         buttons.addWidget(self.skip_btn)
         buttons.addWidget(self.primary)
         right = QVBoxLayout()
+        right.setSpacing(16)
         right.addWidget(side)
         right.addStretch()
         right.addLayout(buttons)
         body = QHBoxLayout()
-        body.addWidget(self.preview, 3)
-        body.addLayout(right, 2)
+        body.setSpacing(24)
+        body.addWidget(self.preview, 1)
+        body.addLayout(right)
 
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(32, 28, 32, 24)
-        layout.setSpacing(16)
-        layout.addWidget(label("Calibration", "title"))
-        layout.addWidget(label("About 15 seconds. FocusBand judges your posture and where you look "
-                               "against how you sit now, so sit the way you'd like to work.", "muted"))
-        layout.addLayout(body)
+        layout = page_layout(self)
+        layout.addLayout(page_header("Calibration", label(
+            "About 15 seconds. FocusBand judges your posture and where you look against how you sit now, "
+            "so sit the way you'd like to work.", "lead")))
+        layout.addLayout(body, 1)
         self.reset()
 
     # --- state --------------------------------------------------------------------------
@@ -142,7 +148,8 @@ class WizardPage(QWidget):
         self._render()
 
     def _render(self) -> None:
-        heading, text = STEPS[self.phase]
+        step, heading, text = STEPS[self.phase]
+        set_eyebrow(self.step_label, step)
         self.heading.setText(heading)
         self.instruction.setText(text)
         self.skip_btn.setVisible(self.phase == "window")
