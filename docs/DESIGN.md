@@ -134,7 +134,7 @@ The desktop app runs three threads so the UI never freezes (`app/runtime.py`): a
 | Bluetooth LE | Not used; the band sink is a stub | `bleak` is the intended library if the band is ever built |
 | Type checking | mypy, strict | Paths set in `pyproject.toml`: contracts, logic, alerts, storage |
 | Storage | SQLite (Python's built-in `sqlite3`) plus a JSON settings file | Local only |
-| Packaging | PyInstaller, one build per OS | The macOS build needs a camera usage description in its Info.plist |
+| Packaging | PyInstaller, one build per OS (`scripts/build_app.py`, `packaging/focusband.spec`) | One-folder build; macOS wraps it in `FocusBand.app` with a camera usage description and an ad-hoc signature (free, not notarised). Models and pings are bundled and found through `app/paths.py`. The build runs the packaged app's `--smoke-test` (loads the models, never opens the camera) |
 | Development | IBM Bob for scaffolding, tests and refactors; GitHub for code | See section 13 |
 
 ## 5. Vision pipeline

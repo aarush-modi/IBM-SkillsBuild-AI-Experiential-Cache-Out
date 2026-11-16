@@ -13,10 +13,11 @@ import subprocess
 import sys
 from pathlib import Path
 
+from app.paths import resource_root
+
 log = logging.getLogger(__name__)
 
-# TODO(packaging): a PyInstaller build must resolve this from sys._MEIPASS instead.
-SOUNDS_DIR = Path(__file__).resolve().parent / "sounds"
+SOUNDS_DIR = resource_root() / "app" / "alerts" / "sounds"  # the repo, or the packaged app's bundle
 
 
 def sound_path(pattern: int) -> Path:

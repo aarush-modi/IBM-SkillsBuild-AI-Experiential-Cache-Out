@@ -10,8 +10,9 @@ from __future__ import annotations
 from pathlib import Path
 from typing import NamedTuple
 
-# TODO(packaging): a PyInstaller build must resolve this from sys._MEIPASS instead.
-MODELS_DIR = Path(__file__).resolve().parents[2] / "models"
+from app.paths import resource_root
+
+MODELS_DIR = resource_root() / "models"  # the repo, or the packaged app's bundle
 
 _MP = "https://storage.googleapis.com/mediapipe-models"
 
