@@ -23,6 +23,7 @@ class HomePage(QWidget):
     recalibrate_requested = Signal()
     settings_requested = Signal()
     report_requested = Signal(int)   # session id
+    dashboard_requested = Signal()
 
     def __init__(self) -> None:
         super().__init__()
@@ -38,6 +39,8 @@ class HomePage(QWidget):
         self._last_id: int | None = None
         recal = QPushButton("Recalibrate")
         settings_btn = QPushButton("Settings")
+        dashboard_btn = QPushButton("Dashboard")
+        dashboard_btn.clicked.connect(self.dashboard_requested)
 
         self.start_btn.clicked.connect(lambda: self.start_requested.emit(self.pomodoro.isChecked()))
         recal.clicked.connect(self.recalibrate_requested)
@@ -51,6 +54,7 @@ class HomePage(QWidget):
         last_card = card(label("Last session", "subtitle"), self.last_session, self.report_btn)
         last_card.setMaximumWidth(460)
         extra = QHBoxLayout()
+        extra.addWidget(dashboard_btn)
         extra.addWidget(recal)
         extra.addWidget(settings_btn)
         extra.addStretch()

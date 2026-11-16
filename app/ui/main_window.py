@@ -8,6 +8,7 @@ from __future__ import annotations
 import copy
 import logging
 import time
+from datetime import datetime, timedelta
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -21,11 +22,13 @@ from app.contracts import PATTERN_TEST, Alert
 from app.logic.calibration import Calibration, OutdatedCalibration
 from app.logic.pomodoro import Pomodoro
 from app.logic.report import build_report
+from app.logic.stats import build_stats
 from app.runtime import Engine, Status
 from app.storage import settings as settings_mod
 from app.storage.db import Database, delete_all_data
 from app.storage.settings import DEFAULTS
 from app.ui import theme
+from app.ui.dashboard import DashboardPage
 from app.ui.home import HomePage
 from app.ui.report import TOP_ISSUES, ReportPage
 from app.ui.session import SessionPage
@@ -71,8 +74,9 @@ class MainWindow(QMainWindow):
         self.home = HomePage()
         self.session = SessionPage()
         self.report = ReportPage(settings["posture"]["bad_score"])
+        self.dashboard = DashboardPage()
         self.stack = QStackedWidget()
-        for page in (self.welcome, self.wizard, self.home, self.session, self.report):
+        for page in (self.welcome, self.wizard, self.home, self.session, self.report, self.dashboard):
             self.stack.addWidget(page)
         self.setCentralWidget(self.stack)
         self.tray = Tray()
@@ -86,6 +90,9 @@ class MainWindow(QMainWindow):
         self.home.settings_requested.connect(self.open_settings)
         self.home.report_requested.connect(self.show_report)
         self.report.done.connect(lambda: self.stack.setCurrentWidget(self.home))
+        self.home.dashboard_requested.connect(lambda: self.show_dashboard(self.dashboard.days))
+        self.dashboard.period_changed.connect(self.show_dashboard)
+        self.dashboard.back.connect(lambda: self.stack.setCurrentWidget(self.home))
         self.session.pause_toggled.connect(self.toggle_pause)
         self.session.break_requested.connect(lambda: self._pause("break"))
         self.session.snooze_toggled.connect(self.toggle_snooze)
@@ -202,6 +209,16 @@ class MainWindow(QMainWindow):
             self.recalibrate()
         elif session_id is None or not self.show_report(session_id):
             self.stack.setCurrentWidget(self.home)
+
+    def show_dashboard(self, days: int) -> None:
+        now = datetime.now().astimezone()
+        first = (now - timedelta(days=days - 1)).replace(hour=0, minute=0, second=0, microsecond=0)
+        reports = [
+            build_report(s, self.db.events(s["id"]), self.db.posture_samples(s["id"]), 0)
+            for s in self.db.sessions_since(first)
+        ]
+        self.dashboard.show_stats(build_stats(reports, now.date(), days))
+        self.stack.setCurrentWidget(self.dashboard)
 
     def show_report(self, session_id: int) -> bool:
         """Show the report for a stored session; False if there is nothing to show."""

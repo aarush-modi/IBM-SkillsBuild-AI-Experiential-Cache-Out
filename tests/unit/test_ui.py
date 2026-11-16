@@ -151,3 +151,20 @@ def test_delete_my_data(qapp: QApplication, window: MainWindow, tmp_path: Path,
     assert not (tmp_path / "settings.json").exists()
     assert w.stack.currentWidget() is w.welcome and w.calibration is None
     assert not w.settings["consent_given"]
+
+
+def test_dashboard_periods_and_data(qapp: QApplication, window: MainWindow) -> None:
+    from datetime import datetime, timedelta
+
+    w = window
+    w.home.dashboard_requested.emit()
+    assert w.stack.currentWidget() is w.dashboard and w.dashboard.days == 7
+    assert not w.dashboard.empty.isHidden()  # no sessions yet
+
+    start = datetime.now().astimezone() - timedelta(hours=1)
+    sid = w.db.start_session(start.isoformat(timespec="seconds"))
+    w.db.end_session(sid, (start + timedelta(minutes=45)).isoformat(timespec="seconds"), 40 * 60, 88.0)
+    w.dashboard.period_buttons[30].click()
+    assert w.dashboard.days == 30 and w.dashboard.empty.isHidden()
+    w.dashboard.back.emit()
+    assert w.stack.currentWidget() is w.home

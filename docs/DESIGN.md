@@ -323,7 +323,7 @@ One window switches between pages (Welcome on first run → Calibration → Home
 | Session | Live preview with skeleton overlay toggle, "camera on" indicator, timer, focus state chip, posture score, tip banner, Pause, Break, Snooze and End buttons; also the alert banner, the "move back or tilt the camera" hint, the camera-moved warning with Recalibrate, and the Pomodoro countdown | P0 |
 | Settings | Thresholds from section 8, Pomodoro lengths, camera choice, overlay default, alert sound on or off, Send test alert, band shown as "coming soon", session retention and Delete my data | P0 |
 | Session report | Focus time vs total time, distractions by type with counts and minutes, posture score over the session, the 3 most common posture issues with their tips. Opens when a session ends and from Home; built only from the stored rows (`logic/report.py`) | P1 |
-| Dashboard | Focus minutes per day, distractions per hour of work, average posture score, for the last 7 or 30 days | P1 |
+| Dashboard | Focus minutes per day, distractions per hour of work, average posture score, for the last 7 or 30 days, with totals for the period. Opened from Home; aggregates each session's report (`logic/stats.py`), so the two always agree. Distractions per hour and focus share use running time, not pauses or breaks | P1 |
 | Tray or menu-bar icon | Current state colour, Start or End session, Pause, Open window; keeps running when the window is closed | P0 |
 
 ## 11. Data model and settings
@@ -428,7 +428,7 @@ focusband/
     runtime.py           # vision and logic threads, and the Engine the UI drives them through
     contracts.py         # shared frozen dataclasses and AlertSink (stdlib only)
     vision/              # capture.py, landmarkers.py, objects.py, features.py
-    logic/               # detectors.py, posture.py, state_machine.py, calibration.py, session.py, report.py, ...
+    logic/               # detectors.py, posture.py, state_machine.py, calibration.py, session.py, report.py, stats.py, ...
     alerts/              # dispatcher.py, desktop.py, sounds.py (+ sounds/*.wav), messages.py, runner.py, ble_band.py (stub)
     storage/             # db.py, settings.py
     ui/                  # main_window.py, welcome.py, wizard.py, home.py, session.py, settings.py, tray.py, theme.py, widgets.py; report.py, dashboard.py (P1)
