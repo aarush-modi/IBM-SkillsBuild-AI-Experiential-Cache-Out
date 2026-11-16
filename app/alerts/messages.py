@@ -19,6 +19,8 @@ def title(alert: Alert) -> str:
         return "FocusBand: posture"
     if alert.kind == "test":
         return "FocusBand: test alert"
+    if alert.kind == "pomodoro":
+        return "FocusBand: break time" if alert.label == "break" else "FocusBand: back to work"
     return "FocusBand: still distracted" if alert.pattern == PATTERN_ESCALATED else "FocusBand: distraction"
 
 
@@ -27,4 +29,8 @@ def body(alert: Alert) -> str:
         return next((tip for issue, tip in TIPS.items() if issue == alert.label), "Check your posture.")
     if alert.kind == "test":
         return "Alerts are working: this is the sound and notification you'll get."
+    if alert.kind == "pomodoro":
+        if alert.label == "break":
+            return "Step away for a few minutes. The camera is off until the break ends."
+        return "Break's over. The camera is back on."
     return DISTRACTION_TEXT.get(alert.label, "You seem distracted. Back to it?")

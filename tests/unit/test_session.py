@@ -135,3 +135,21 @@ def test_delete_old_sessions_keeps_calibration(tmp_path: Path) -> None:
         assert db.session(old) is None and db.events(old) == [] and db.posture_samples(old) == []
         assert db.session(new) is not None
         assert db.latest_calibration() == {"version": 3}
+
+
+def test_camera_hint_after_shoulders_missing() -> None:
+    r = Run()
+    u = r.hold(4, shoulder_visibility=0.2)
+    assert u.camera_hint is None
+    u = r.hold(2, shoulder_visibility=0.2)
+    assert u.camera_hint is not None and "camera down" in u.camera_hint
+    assert r.hold(1).camera_hint is None
+
+
+def test_camera_moved_check_at_start() -> None:
+    r = Run()
+    moved = [u.camera_moved for u in [r.hold(4, shoulder_mid=(0.75, 0.45))] + r.updates if u.camera_moved is not None]
+    assert moved == [True]
+    r2 = Run()
+    r2.hold(4)
+    assert [u.camera_moved for u in r2.updates if u.camera_moved is not None] == [False]

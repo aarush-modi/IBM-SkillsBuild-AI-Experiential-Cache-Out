@@ -47,9 +47,9 @@ FocusBand has no accounts, no server and no cloud APIs, and sends nothing off th
 | Threat | Likelihood | Mitigation | Where / when |
 | --- | --- | --- | --- |
 | Alert content seen by someone nearby | Low | Notifications carry only a short title and a generic line such as "Phone in hand for a while" (section 9). No session details, names, images or landmarks. Users can hide FocusBand previews on the lock screen in system settings | alerts/messages.py (done) |
-| Another user on the same computer reads the app data | Low | App data folder 0700 and files 0600 on macOS; on Windows, the per-user %APPDATA% folder | storage/settings.py, storage/db.py |
+| Another user on the same computer reads the app data | Low | App data folder 0700 and files 0600 on macOS; on Windows, the per-user %APPDATA% folder | storage/settings.py, storage/db.py (done) |
 | Laptop stolen or disk copied | Low | The database holds no images, only times, labels and scores. The consent screen recommends FileVault or BitLocker. No app-level database encryption, because SQLCipher adds a native dependency and key handling for little gain | Welcome and consent screen (P0) |
-| User wants their data gone | — | Delete my data removes the database and settings. Optional automatic deletion of sessions older than N days [`delete_sessions_after_days`], off by default | Welcome screen (P0), Settings |
+| User wants their data gone | — | Delete my data removes the database and settings. Optional automatic deletion of sessions older than N days [`delete_sessions_after_days`], off by default | Welcome screen and Settings (done) |
 | A swapped or tampered model file runs code (.pt uses pickle) | Low | Model URLs pinned to fixed versions, with size and SHA-256 checked before use | scripts/download_models.py (done) |
 | Third-party libraries send telemetry | Medium | Ultralytics analytics off (YOLO_OFFLINE=1, event queue disabled), guarded by tests | vision/objects.py (done) |
 | Frames or landmarks leak into logs or files, or data leaves the computer | Low | No frame writes in app code, and no network requests at run time. Acceptance checks: after a session, the app data folder has no image or video files, and the app made no network connections | Section 12 acceptance criteria |
@@ -120,7 +120,7 @@ One Python process runs everything, and nothing leaves the computer. The band ap
 
 Frames flow from webcam to features; the alert dispatcher turns alerts into a ping and a desktop notification on the same computer, never an image.
 
-The desktop app runs three threads so the UI never freezes: a **vision thread** (capture, models, features), a **logic thread** (rules, state machine, posture tracker, storage) and the **Qt UI thread**. They pass immutable dataclasses through queues. Alert sending runs on an asyncio loop beside the logic thread (`alerts/runner.py`), because `desktop-notifier` (and Bluetooth, if the band is ever built) is asynchronous; a slow notification never delays a frame.
+The desktop app runs three threads so the UI never freezes (`app/runtime.py`): a **vision thread** (capture, models, features), a **logic thread** (rules, state machine, posture tracker, storage) and the **Qt UI thread**, which polls the other two about 30 times a second and is the only thread that touches widgets. They pass immutable dataclasses through queues. Alert sending runs on an asyncio loop beside the logic thread (`alerts/runner.py`), because `desktop-notifier` (and Bluetooth, if the band is ever built) is asynchronous; a slow notification never delays a frame.
 
 | Layer | Choice | Notes |
 | --- | --- | --- |
@@ -265,6 +265,8 @@ Any of the four distractions starts the Pending timer once its detector fires. F
 | Absence before the away detector fires | 10 s | `away_detect_s` | No (file only) |
 | Away with no input before auto-pausing the session | 10 min | `auto_pause_away_s` | 5 to 30 min |
 
+**Pomodoro (optional, FR-01).** Off by default and switched on per session from Home [`pomodoro.enabled` remembers the last choice]. Work periods of 25 min [`pomodoro.work_min`] alternate with 5 min breaks [`pomodoro.break_min`]. A break pauses the session like the Break button (camera off) and sends a "break time" alert; when it ends, the session resumes by itself with a "back to work" alert (pattern 4). Manual pauses don't stop the Pomodoro clock.
+
 Every state change is written to the `events` table with a timestamp, so the report and dashboard are built from the same record the alerts used.
 
 ## 9. Alert delivery
@@ -279,7 +281,7 @@ class AlertSink(Protocol):
 
 @dataclass(frozen=True)
 class Alert:
-    kind: Literal["distraction", "posture", "test"]
+    kind: Literal["distraction", "posture", "pomodoro", "test"]
     label: str        # e.g. "phone", "window", "slouching"
     pattern: int      # alert pattern ID, table below
     created_at: float
@@ -311,14 +313,15 @@ The band is presented as a design. This contract describes how it would work: th
 
 ## 10. Desktop screens
 
-Six screens plus a tray or menu-bar icon cover the whole flow; the session screen is the one the demo lives on.
+One window switches between pages (Welcome on first run → Calibration → Home → Session), with Settings as a dialog and a tray or menu-bar icon; the session page is the one the demo lives on. Closing the window keeps the app running in the tray. The look follows the system light or dark mode.
 
 | Screen | Contents | Priority |
 | --- | --- | --- |
 | Welcome and consent | What the camera analyses, what is stored, camera permission request, link to Delete my data | P0 |
 | Calibration wizard | The two steps from section 7 with a live preview, a countdown and a pass or retry result per step | P0 |
-| Session | Live preview with skeleton overlay toggle, "camera on" indicator, timer, focus state chip, posture score, tip banner, Pause, Break, Snooze and End buttons | P0 |
-| Settings | Thresholds from section 8, camera choice, overlay default, alert sound on or off, Send test alert, band shown as "coming soon" | P0 |
+| Home | Start session, an optional Pomodoro toggle, the last session's summary, Recalibrate and Settings | P0 |
+| Session | Live preview with skeleton overlay toggle, "camera on" indicator, timer, focus state chip, posture score, tip banner, Pause, Break, Snooze and End buttons; also the alert banner, the "move back or tilt the camera" hint, the camera-moved warning with Recalibrate, and the Pomodoro countdown | P0 |
+| Settings | Thresholds from section 8, Pomodoro lengths, camera choice, overlay default, alert sound on or off, Send test alert, band shown as "coming soon", session retention and Delete my data | P0 |
 | Session report | Focus time vs total time, distractions by type with counts and minutes, posture score over the session, the 3 most common posture issues with their tips | P1 |
 | Dashboard | Focus minutes per day, distractions per hour of work, average posture score, for the last 7 or 30 days | P1 |
 | Tray or menu-bar icon | Current state colour, Start or End session, Pause, Open window; keeps running when the window is closed | P0 |
@@ -366,6 +369,7 @@ Settings live in `settings.json` next to the database. These defaults are the si
 {
   "camera_index": 0,
   "overlay": true,
+  "consent_given": false,
 
   "distraction_threshold_s": {"phone": 60, "looking_away": 60, "desk_object": 60, "away": 60},
   "focus_reset_s": 5,
@@ -376,6 +380,7 @@ Settings live in `settings.json` next to the database. These defaults are the si
   "posture_cooldown_s": 300,
   "snooze_s": 600,
   "auto_pause_away_s": 600,
+  "pomodoro": {"enabled": false, "work_min": 25, "break_min": 5},
   "delete_sessions_after_days": null,
 
   "vision": {
@@ -410,7 +415,7 @@ Settings live in `settings.json` next to the database. These defaults are the si
 }
 ```
 
-`delete_sessions_after_days` is off (`null`) by default. When set to N, sessions that started more than N days ago are deleted at app start, together with their `events` and `posture_samples` rows. Calibration rows are kept. The Settings screen offers off, 7, 30 or 90 days.
+`consent_given` records that the user accepted the Welcome screen; it is false again after Delete my data. `delete_sessions_after_days` is off (`null`) by default. When set to N, sessions that started more than N days ago are deleted at app start, together with their `events` and `posture_samples` rows. Calibration rows are kept. The Settings screen offers off, 7, 30 or 90 days.
 
 ## 12. Repository, testing and acceptance
 
@@ -419,13 +424,14 @@ The repo separates models from rules so that every rule can be tested with fake 
 ```text
 focusband/
   app/
-    main.py              # starts threads, Qt app, tray icon
+    main.py              # entry point: Qt app, theme, old-session cleanup, main window
+    runtime.py           # vision and logic threads, and the Engine the UI drives them through
     contracts.py         # shared frozen dataclasses and AlertSink (stdlib only)
     vision/              # capture.py, landmarkers.py, objects.py, features.py
     logic/               # detectors.py, posture.py, state_machine.py, calibration.py
     alerts/              # dispatcher.py, desktop.py, sounds.py (+ sounds/*.wav), messages.py, runner.py, ble_band.py (stub)
     storage/             # db.py, settings.py
-    ui/                  # session.py, wizard.py, settings.py, report.py, dashboard.py
+    ui/                  # main_window.py, welcome.py, wizard.py, home.py, session.py, settings.py, tray.py, theme.py, widgets.py; report.py, dashboard.py (P1)
   models/                # .task and .pt files, downloaded by a setup script
   shared/ble_contract.json  # band design: UUIDs and pattern table (not used at runtime)
   tests/

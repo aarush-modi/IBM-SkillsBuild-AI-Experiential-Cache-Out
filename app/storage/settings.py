@@ -21,6 +21,7 @@ APP_NAME = "FocusBand"
 DEFAULTS: dict[str, Any] = {
     "camera_index": 0,
     "overlay": True,
+    "consent_given": False,
 
     "distraction_threshold_s": {"phone": 60, "looking_away": 60, "desk_object": 60, "away": 60},
     "focus_reset_s": 5,
@@ -31,6 +32,7 @@ DEFAULTS: dict[str, Any] = {
     "posture_cooldown_s": 300,
     "snooze_s": 600,
     "auto_pause_away_s": 600,
+    "pomodoro": {"enabled": False, "work_min": 25, "break_min": 5},
     "delete_sessions_after_days": None,
 
     "vision": {
@@ -80,6 +82,17 @@ def default_path() -> Path:
     return app_data_dir() / "settings.json"
 
 
+def make_private(path: Path) -> None:
+    """Only the user can read the app data (DESIGN §2): folder 0700, files 0600 on macOS and
+    Linux. On Windows the per-user %APPDATA% folder already does this."""
+    if sys.platform == "win32" or not path.exists():
+        return
+    try:
+        path.chmod(0o700 if path.is_dir() else 0o600)
+    except OSError as e:
+        log.warning("Could not restrict permissions on %s: %s", path, e)
+
+
 def _merge(defaults: dict[str, Any], user: dict[str, Any]) -> dict[str, Any]:
     """Return defaults overlaid with the user's values, recursing into nested blocks."""
     merged = copy.deepcopy(defaults)
@@ -115,6 +128,9 @@ def save(settings: dict[str, Any], path: Path | None = None) -> None:
     """Write settings atomically, so a crash mid-write never leaves a broken file."""
     path = path or default_path()
     path.parent.mkdir(parents=True, exist_ok=True)
+    make_private(path.parent)
     tmp = path.with_suffix(".json.tmp")
     tmp.write_text(json.dumps(settings, indent=2), encoding="utf-8")
+    make_private(tmp)
     tmp.replace(path)
+

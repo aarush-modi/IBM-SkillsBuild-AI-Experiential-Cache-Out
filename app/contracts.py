@@ -11,7 +11,7 @@ from typing import Literal, Protocol
 # Normalized image coordinates (0 to 1): x_min, y_min, x_max, y_max.
 BBox = tuple[float, float, float, float]
 
-AlertKind = Literal["distraction", "posture", "test"]
+AlertKind = Literal["distraction", "posture", "pomodoro", "test"]
 
 # Vibration pattern IDs (DESIGN §9).
 PATTERN_DISTRACTION = 1
