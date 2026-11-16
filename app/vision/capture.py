@@ -35,6 +35,24 @@ class Frame:
     timestamp_ms: int             # strictly increasing, as MediaPipe VIDEO mode requires
 
 
+def fit_frame(image: npt.NDArray[np.uint8], width: int, height: int) -> npt.NDArray[np.uint8]:
+    """Centre-crop to width:height, then resize. Never stretches, because stretching would
+    distort shoulder width, face width and head yaw. Used for camera frames and replayed clips."""
+    h, w = image.shape[:2]
+    if (w, h) == (width, height):
+        return image
+    target = width / height
+    if w / h > target:  # too wide: trim the sides
+        crop_w = round(h * target)
+        x0 = (w - crop_w) // 2
+        image = image[:, x0:x0 + crop_w]
+    elif w / h < target:  # too tall: trim top and bottom
+        crop_h = round(w / target)
+        y0 = (h - crop_h) // 2
+        image = image[y0:y0 + crop_h, :]
+    return np.asarray(cv2.resize(image, (width, height)), dtype=np.uint8)
+
+
 class CameraError(RuntimeError):
     pass
 
@@ -121,16 +139,7 @@ class Camera:
                 "Camera %d gives %dx%d instead of %dx%d; centre-cropping to fit",
                 self.index, w, h, self.width, self.height,
             )
-        target = self.width / self.height
-        if w / h > target:  # too wide: trim the sides
-            crop_w = round(h * target)
-            x0 = (w - crop_w) // 2
-            image = image[:, x0:x0 + crop_w]
-        elif w / h < target:  # too tall: trim top and bottom
-            crop_h = round(w / target)
-            y0 = (h - crop_h) // 2
-            image = image[y0:y0 + crop_h, :]
-        return np.asarray(cv2.resize(image, (self.width, self.height)), dtype=np.uint8)
+        return fit_frame(image, self.width, self.height)
 
     def close(self) -> None:
         if self._cap is not None:
